@@ -236,59 +236,90 @@ def run(params):
         date_ranges = get_filing_dates(params["period_type"], params["num_periods"])
         
         all_financial_data = {}
+        filings_found = False
+        
+        # Try both 10-K/10-Q and alternate filing types to increase chances of finding data
+        filing_types = []
+        if params["period_type"].lower() == "annual":
+            filing_types = ["10-K", "20-F", "40-F"]  # Try annual reports for US, foreign, and Canadian companies
+        else:
+            filing_types = ["10-Q", "6-K"]  # Try quarterly reports for US and foreign companies
         
         # Process each period
         for i, (start_date, end_date) in enumerate(date_ranges):
             period_label = f"Period {i+1}: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
             print(f"\nProcessing {period_label}...")
             
-            # Get filings for the period
-            filings = filing_retrieval.get_filing_metadata(
-                params["cik"],
-                filing_type="10-K" if params["period_type"] == "annual" else "10-Q",
-                start_date=start_date,
-                end_date=end_date,
-                limit=1  # Get only the most recent filing for the period
-            )
-            
-            if not filings:
-                print(f"No filings found for {period_label}")
-                continue
-            
-            # Get the XBRL data for the first filing
-            filing = filings[0]
-            print(f"Found filing: {filing['form']} filed on {filing['filing_date']}")
-            
-            _, xbrl_content = filing_retrieval.get_xbrl_filing(params["cik"], filing["accession_number"])
-            
-            if not xbrl_content:
-                print(f"No XBRL data found for filing {filing['accession_number']}")
-                continue
-            
-            # Parse the XBRL data
-            statement_data = xbrl_parser.extract_financial_statement(xbrl_content, params["statement_type"])
-            
-            if not statement_data:
-                print(f"No {params['statement_type']} data found in filing {filing['accession_number']}")
-                continue
-            
-            # Add to the combined data
-            for category, category_data in statement_data.items():
-                if category not in all_financial_data:
-                    all_financial_data[category] = {}
+            # Try each filing type
+            for filing_type in filing_types:
+                # Get filings for the period
+                filings = filing_retrieval.get_filing_metadata(
+                    params["cik"],
+                    filing_type=filing_type,
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=3  # Get up to 3 filings per period to increase chances of finding XBRL data
+                )
                 
-                for tag, tag_data in category_data.items():
-                    if tag not in all_financial_data[category]:
-                        all_financial_data[category][tag] = []
+                if not filings:
+                    continue
+                
+                filings_found = True
+                print(f"Found {len(filings)} {filing_type} filings")
+                
+                # Try each filing until we get valid XBRL data
+                for filing in filings:
+                    print(f"Processing filing: {filing['form']} filed on {filing['filing_date']}")
                     
-                    all_financial_data[category][tag].extend(tag_data)
+                    # Get the XBRL data
+                    _, xbrl_content = filing_retrieval.get_xbrl_filing(params["cik"], filing["accession_number"])
+                    
+                    if not xbrl_content:
+                        print(f"No XBRL data found for filing {filing['accession_number']}")
+                        continue
+                    
+                    # Parse the XBRL data
+                    statement_data = xbrl_parser.extract_financial_statement(xbrl_content, params["statement_type"])
+                    
+                    if not statement_data:
+                        print(f"No {params['statement_type']} data found in filing {filing['accession_number']}")
+                        continue
+                    
+                    # Add to the combined data
+                    for category, category_data in statement_data.items():
+                        if category not in all_financial_data:
+                            all_financial_data[category] = {}
+                        
+                        for tag, tag_data in category_data.items():
+                            if tag not in all_financial_data[category]:
+                                all_financial_data[category][tag] = []
+                            
+                            all_financial_data[category][tag].extend(tag_data)
+                    
+                    # Break if we got data for this period
+                    if statement_data:
+                        break
+                
+                # Break if we found usable filings for this filing type
+                if filings:
+                    break
+        
+        if not filings_found:
+            print("\nNo filings found for the specified criteria.")
+            print("Try adjusting the date ranges or using different filing types.")
+            return False
         
         if not all_financial_data:
-            print("\nNo financial data found for the specified criteria.")
+            print("\nNo financial data found in the retrieved filings.")
+            print("Try a different statement type or company.")
             return False
         
         # Normalize the data
         normalized_data = xbrl_parser.normalize_financial_data(all_financial_data, params["period_type"])
+        
+        if not normalized_data or not normalized_data.get("periods") or not normalized_data.get("metrics"):
+            print("\nInsufficient financial data for normalization.")
+            return False
         
         # Format and output the data
         output = data_formatter.format_statement(
@@ -368,7 +399,7 @@ def main():
     if success:
         print("\nOperation completed successfully.")
     else:
-        print("\nOperation failed. Check the log for details.")
+        print("\nOperation failed. See messages above for details.")
 
 
 if __name__ == "__main__":

@@ -5,3 +5,4 @@ tabulate
 openpyxl
 beautifulsoup4
 lxml
+jsonschema

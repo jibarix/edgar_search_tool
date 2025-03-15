@@ -79,58 +79,44 @@ def get_filing_dates(period_type, num_periods):
     today = datetime.now()
     date_ranges = []
     
-    if period_type == 'annual':
-        # For annual reports, go back num_periods years
+    if period_type.lower() == 'annual':
+        # For annual reports, look back by fiscal years
+        # Most companies have fiscal year ending Dec 31, but we'll be more flexible
+        
+        # Start with a wider range to improve the chances of finding filings
         for i in range(num_periods):
+            # For each period, look at a full year
+            # But offset the periods by 1 year each
             end_year = today.year - i
-            start_year = end_year - 1
             
-            end_date = datetime(end_year, 12, 31)
-            start_date = datetime(start_year, 1, 1)
-            
-            # Don't go beyond today for the most recent period
-            if i == 0 and end_date > today:
+            # End date is current date for most recent period, Dec 31 for others
+            if i == 0:
                 end_date = today
-                
+            else:
+                end_date = datetime(end_year, 12, 31)
+            
+            # Start date is 1 year and 3 months before end date (to cover fiscal year variations)
+            start_date = datetime(end_year - 1, 9, 1)
+            
             date_ranges.append((start_date, end_date))
     
-    elif period_type == 'quarterly':
-        # For quarterly reports, go back num_periods quarters
-        current_quarter = (today.month - 1) // 3 + 1
-        current_year = today.year
-        
+    elif period_type.lower() == 'quarterly':
+        # For quarterly reports, be more flexible with the quarters
         for i in range(num_periods):
-            # Calculate quarter and year
-            quarter = current_quarter - (i % 4)
-            year_offset = i // 4
+            # Offset by 3 months for each period
+            end_date = today - timedelta(days=i*90)
+            # Start date is 4 months before end date (to cover various fiscal quarters)
+            start_date = end_date - timedelta(days=120)
             
-            if quarter <= 0:
-                quarter += 4
-                year_offset += 1
-                
-            year = current_year - year_offset
-            
-            # Calculate start and end dates for the quarter
-            start_month = (quarter - 1) * 3 + 1
-            end_month = quarter * 3
-            
-            if start_month == 1:
-                start_date = datetime(year, start_month, 1)
-            else:
-                prev_quarter_year = year
-                prev_quarter_month = start_month - 3
-                if prev_quarter_month <= 0:
-                    prev_quarter_month += 12
-                    prev_quarter_year -= 1
-                start_date = datetime(prev_quarter_year, prev_quarter_month, 1)
-            
-            end_date = datetime(year, end_month, 1) + timedelta(days=32)
-            end_date = end_date.replace(day=1) - timedelta(days=1)
-            
-            # Don't go beyond today for the most recent period
-            if i == 0 and end_date > today:
-                end_date = today
-                
+            date_ranges.append((start_date, end_date))
+    
+    else:  # Year-to-date or other
+        # Simple approach - just go back in time
+        end_date = today
+        for i in range(num_periods):
+            if i > 0:
+                end_date = date_ranges[-1][0] - timedelta(days=1)
+            start_date = end_date - timedelta(days=365)
             date_ranges.append((start_date, end_date))
     
     return date_ranges
@@ -194,6 +180,9 @@ def parse_date(date_str):
     Returns:
         datetime: Parsed datetime object or None if parsing fails
     """
+    if not date_str:
+        return None
+        
     date_formats = [
         "%Y-%m-%d",
         "%Y/%m/%d",
