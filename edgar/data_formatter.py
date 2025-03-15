@@ -58,6 +58,39 @@ class DataFormatter:
         else:
             return f"Financial Statement ({statement_type})"
     
+    def _format_period_header(self, period, metadata=None):
+        """
+        Format a period date into a readable header.
+        
+        Args:
+            period (str): Period date in ISO format (YYYY-MM-DD)
+            metadata (dict): Optional metadata about the fiscal year
+            
+        Returns:
+            str: Formatted period header
+        """
+        try:
+            date_obj = datetime.strptime(period, "%Y-%m-%d")
+            
+            # If metadata is provided, check if this is a fiscal year end
+            if metadata and 'fiscal_month' in metadata:
+                fiscal_month = metadata['fiscal_month']
+                period_type = metadata.get('period_type', 'annual')
+                
+                if period.split('-')[1] == fiscal_month:
+                    # This is a fiscal year end date
+                    if period_type == 'annual':
+                        return f"FY {date_obj.year}"
+                    else:
+                        # For quarterly periods
+                        return f"Q{(date_obj.month % 3) or 4} {date_obj.year}"
+            
+            # Default formatting
+            return date_obj.strftime("%b %d, %Y")
+        except ValueError:
+            # If date parsing fails, return the original
+            return period
+    
     def _create_dataframe(self, data):
         """
         Create a DataFrame from normalized financial data.
@@ -70,6 +103,11 @@ class DataFormatter:
         """
         # Prepare data for DataFrame
         df_data = []
+        
+        # Format period headers
+        metadata = data.get('metadata', {})
+        formatted_periods = {period: self._format_period_header(period, metadata) 
+                            for period in data['periods']}
         
         # Group metrics by category for better organization
         metrics_by_category = {}
@@ -84,7 +122,7 @@ class DataFormatter:
             # Add category header
             df_data.append({
                 'Metric': f"--- {category} ---",
-                **{period: "" for period in data['periods']}
+                **{formatted_periods[period]: "" for period in data['periods']}
             })
             
             # Add metrics in this category
@@ -97,7 +135,7 @@ class DataFormatter:
                 
                 for period in data['periods']:
                     value = metric_data['values'].get(period)
-                    row_data[period] = value
+                    row_data[formatted_periods[period]] = value
                 
                 df_data.append(row_data)
         
@@ -146,6 +184,10 @@ class DataFormatter:
         
         statement_title = self._get_statement_title(statement_type)
         
+        # Log information about the periods being formatted
+        period_info = ", ".join([self._format_period_header(p, data.get('metadata')) for p in data['periods']])
+        logger.info(f"Formatting {statement_title} for periods: {period_info}")
+        
         # Create a DataFrame from the data
         df = self._create_dataframe(data)
         
@@ -162,7 +204,7 @@ class DataFormatter:
         elif self.output_format == 'json':
             return self._output_json(formatted_df, statement_type, company_name, output_file)
         elif self.output_format == 'excel':
-            return self._output_excel(formatted_df, statement_type, company_name, output_file)
+            return self._output_excel(formatted_df, statement_type, company_name, output_file, data)
         else:  # console
             return self._format_for_console(formatted_df, statement_title, company_name)
     
@@ -227,7 +269,8 @@ class DataFormatter:
             "metadata": {
                 "company": company_name,
                 "statement_type": self._get_statement_title(statement_type),
-                "generated_at": datetime.now().isoformat()
+                "generated_at": datetime.now().isoformat(),
+                "fiscal_periods": [col for col in df.columns if col not in ['Company', 'Metric']]
             },
             "data": json.loads(df.to_json(orient="records"))
         }
@@ -239,7 +282,7 @@ class DataFormatter:
         logger.info(f"JSON output saved to {output_file}")
         return output_file
     
-    def _output_excel(self, df, statement_type, company_name=None, output_file=None):
+    def _output_excel(self, df, statement_type, company_name=None, output_file=None, data=None):
         """
         Output data as Excel file.
         
@@ -248,6 +291,7 @@ class DataFormatter:
             statement_type (str): Type of financial statement
             company_name (str): Name of the company
             output_file (str): Path to output file
+            data (dict): Original normalized data
             
         Returns:
             str: Path to the output file
@@ -288,9 +332,34 @@ class DataFormatter:
                 
             worksheet.merge_range(0, 0, 0, len(df.columns) - 1, title, title_format)
             
-            # Move data down one row to make space for the title
-            df.to_excel(writer, sheet_name=self._get_statement_title(statement_type), 
-                        startrow=1, index=False)
+            # Add fiscal year info if available
+            if data and 'metadata' in data and 'fiscal_month' in data['metadata']:
+                fiscal_month = int(data['metadata']['fiscal_month'])
+                month_names = ['January', 'February', 'March', 'April', 'May', 'June',
+                               'July', 'August', 'September', 'October', 'November', 'December']
+                fiscal_note = f"Note: Company uses a fiscal year ending in {month_names[fiscal_month-1]}"
+                
+                note_format = workbook.add_format({
+                    'italic': True,
+                    'font_size': 10,
+                    'align': 'center'
+                })
+                
+                worksheet.merge_range(1, 0, 1, len(df.columns) - 1, fiscal_note, note_format)
+                
+                # Adjust the starting row for the data
+                df.to_excel(writer, sheet_name=self._get_statement_title(statement_type), 
+                            startrow=2, index=False)
+                
+                # Adjust header row for formats below
+                header_row = 2
+            else:
+                # Move data down one row to make space for the title
+                df.to_excel(writer, sheet_name=self._get_statement_title(statement_type), 
+                            startrow=1, index=False)
+                
+                # Standard header row
+                header_row = 1
             
             # Format headers
             header_format = workbook.add_format({
@@ -301,7 +370,7 @@ class DataFormatter:
             })
             
             for col_num, value in enumerate(df.columns.values):
-                worksheet.write(1, col_num, value, header_format)
+                worksheet.write(header_row, col_num, value, header_format)
             
             # Format category rows
             category_format = workbook.add_format({
@@ -311,7 +380,7 @@ class DataFormatter:
             })
             
             # Apply formatting to category rows
-            for row_num, row_data in enumerate(df.values, start=2):  # Start from row 2 (after headers)
+            for row_num, row_data in enumerate(df.values, start=header_row+1):
                 if isinstance(row_data[0], str) and row_data[0].startswith('---'):
                     for col_num in range(len(row_data)):
                         worksheet.write(row_num, col_num, row_data[col_num], category_format)

@@ -68,6 +68,8 @@ def retry_request(request_func, *args, max_retries=3, retry_delay=1, **kwargs):
 def get_filing_dates(period_type, num_periods):
     """
     Generate filing date ranges based on period type and number of periods.
+    This function has been updated to generate a wider range of dates in the past 
+    to ensure we can find the company's actual fiscal periods.
     
     Args:
         period_type (str): 'annual' or 'quarterly'
@@ -79,46 +81,40 @@ def get_filing_dates(period_type, num_periods):
     today = datetime.now()
     date_ranges = []
     
+    # We'll generate more periods than requested to ensure we can find 
+    # the company's actual fiscal year patterns
+    search_periods = max(num_periods * 2, 10)
+    
     if period_type.lower() == 'annual':
-        # For annual reports, look back by fiscal years
-        # Most companies have fiscal year ending Dec 31, but we'll be more flexible
-        
-        # Start with a wider range to improve the chances of finding filings
-        for i in range(num_periods):
-            # For each period, look at a full year
-            # But offset the periods by 1 year each
+        # For annual reports, we need to cast a wider net to find fiscal years
+        # which may not align with calendar years
+        for i in range(search_periods):
+            # Get a range that starts 15 months before the end of the target year
+            # and ends at the end of the target year
             end_year = today.year - i
-            
-            # End date is current date for most recent period, Dec 31 for others
-            if i == 0:
-                end_date = today
-            else:
-                end_date = datetime(end_year, 12, 31)
-            
-            # Start date is 1 year and 3 months before end date (to cover fiscal year variations)
+            end_date = datetime(end_year, 12, 31)
             start_date = datetime(end_year - 1, 9, 1)
             
             date_ranges.append((start_date, end_date))
     
     elif period_type.lower() == 'quarterly':
-        # For quarterly reports, be more flexible with the quarters
-        for i in range(num_periods):
-            # Offset by 3 months for each period
-            end_date = today - timedelta(days=i*90)
-            # Start date is 4 months before end date (to cover various fiscal quarters)
+        # For quarterly reports, create overlapping 4-month windows
+        for i in range(search_periods):
+            # Create a 4-month window, sliding back 3 months at a time
+            end_date = today - timedelta(days=i * 90)
             start_date = end_date - timedelta(days=120)
             
             date_ranges.append((start_date, end_date))
     
     else:  # Year-to-date or other
-        # Simple approach - just go back in time
-        end_date = today
-        for i in range(num_periods):
-            if i > 0:
-                end_date = date_ranges[-1][0] - timedelta(days=1)
+        # For YTD, create a series of annual windows
+        for i in range(search_periods):
+            end_date = today - timedelta(days=i * 365)
             start_date = end_date - timedelta(days=365)
+            
             date_ranges.append((start_date, end_date))
     
+    logger.info(f"Generated {len(date_ranges)} date ranges for {num_periods} requested {period_type} periods")
     return date_ranges
 
 

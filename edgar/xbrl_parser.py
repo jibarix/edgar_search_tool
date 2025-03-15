@@ -5,6 +5,7 @@ Parser for extracting financial data from SEC XBRL and JSON APIs.
 import re
 import logging
 from datetime import datetime
+from collections import Counter
 
 from config.constants import XBRL_TAGS, ERROR_MESSAGES
 from utils.cache import Cache
@@ -25,7 +26,7 @@ class XBRLParser:
         """Initialize the parser."""
         pass
     
-    def parse_company_facts(self, facts_data, statement_type=None, period_type='annual'):
+    def parse_company_facts(self, facts_data, statement_type=None, period_type='annual', num_periods=1):
         """
         Parse company facts JSON data from SEC API.
         
@@ -33,6 +34,7 @@ class XBRLParser:
             facts_data (dict): JSON data from SEC Company Facts API
             statement_type (str): Type of financial statement to extract
             period_type (str): 'annual', 'quarterly', or 'ytd'
+            num_periods (int): Number of most recent periods to include
             
         Returns:
             dict: Normalized financial data by period
@@ -95,6 +97,7 @@ class XBRLParser:
         # Extract financial data
         financial_data = {}
         found_concepts = set()
+        all_periods = []
         
         for taxonomy in taxonomies:
             for group, concepts in concept_groups.items():
@@ -119,6 +122,9 @@ class XBRLParser:
                                     if 'val' not in fact or 'end' not in fact:
                                         continue
                                     
+                                    # Collect end dates for later fiscal year analysis
+                                    all_periods.append(fact['end'])
+                                    
                                     # Filter by period type
                                     if 'start' in fact:  # Duration fact
                                         # Estimate period length in days
@@ -141,20 +147,24 @@ class XBRLParser:
                                     found_concepts.add(concept)
         
         # Normalize the data
-        return self._normalize_api_data(financial_data, period_type)
+        normalized_data = self._normalize_api_data(financial_data, period_type, all_periods, num_periods)
+        logger.info(f"Retrieved data for {len(normalized_data['periods'])} periods: {normalized_data['periods']}")
+        return normalized_data
     
-    def _normalize_api_data(self, financial_data, period_type):
+    def _normalize_api_data(self, financial_data, period_type, all_periods, num_periods):
         """
         Normalize financial data from SEC API into a structured format.
         
         Args:
             financial_data (dict): Extracted financial data
             period_type (str): 'annual' or 'quarterly' or 'ytd'
+            all_periods (list): All period end dates found in the data
+            num_periods (int): Number of periods to return
             
         Returns:
             dict: Normalized financial data by period
         """
-        # Collect all periods first
+        # Collect all unique periods
         periods = set()
         
         for category in financial_data:
@@ -163,25 +173,22 @@ class XBRLParser:
                     period_key = fact['end']
                     periods.add(period_key)
         
-        # Sort periods
-        sorted_periods = sorted(list(periods))
+        # Detect company's fiscal year end month
+        fiscal_month = self._detect_fiscal_year_end(all_periods)
+        logger.info(f"Detected fiscal year end month: {fiscal_month}")
         
-        # Filter periods based on period_type
-        if period_type.lower() == 'annual':
-            # For annual, prioritize December 31 dates if available
-            dec_periods = [p for p in sorted_periods if p.endswith('-12-31')]
-            if dec_periods:
-                filtered_periods = dec_periods
-            else:
-                # If no December dates, use all periods
-                filtered_periods = sorted_periods
-        else:
-            # For quarterly or ytd, keep all periods
-            filtered_periods = sorted_periods
+        # Filter periods by the fiscal year end month
+        fiscal_periods = [p for p in periods if p.split('-')[1] == fiscal_month]
+        
+        # Sort periods in descending order (most recent first)
+        sorted_periods = sorted(fiscal_periods if fiscal_periods else periods, reverse=True)
+        
+        # Limit to the number of periods requested
+        limited_periods = sorted_periods[:num_periods]
         
         # Create normalized data structure
         normalized_data = {
-            'periods': filtered_periods,
+            'periods': limited_periods,
             'metrics': {}
         }
         
@@ -199,7 +206,7 @@ class XBRLParser:
                 }
                 
                 # Find values for each period
-                for period in filtered_periods:
+                for period in limited_periods:
                     value = None
                     
                     # Search for matching fact
@@ -210,9 +217,37 @@ class XBRLParser:
                     
                     normalized_data['metrics'][metric_key]['values'][period] = value
         
+        # Add fiscal year metadata to help with display
+        normalized_data['metadata'] = {
+            'fiscal_month': fiscal_month,
+            'period_type': period_type
+        }
+        
         return normalized_data
     
-    def normalize_financial_data(self, financial_data, period_type='annual'):
+    def _detect_fiscal_year_end(self, all_periods):
+        """
+        Detect the company's fiscal year end month based on the frequency of period end dates.
+        
+        Args:
+            all_periods (list): List of all period end dates
+            
+        Returns:
+            str: Two-digit month representing fiscal year end
+        """
+        # Extract months from period end dates
+        months = [period.split('-')[1] for period in all_periods if '-' in period]
+        
+        # Count occurrences of each month
+        month_counter = Counter(months)
+        
+        # Find the most common month for period endings
+        most_common_month = month_counter.most_common(1)
+        
+        # Return the most common month, or '12' (December) as default
+        return most_common_month[0][0] if most_common_month else '12'
+    
+    def normalize_financial_data(self, financial_data, period_type='annual', num_periods=1):
         """
         Normalize financial data into a structured format.
         Maintained for compatibility with existing code.
@@ -220,8 +255,17 @@ class XBRLParser:
         Args:
             financial_data (dict): Parsed financial data
             period_type (str): 'annual' or 'quarterly'
+            num_periods (int): Number of periods to return
             
         Returns:
             dict: Normalized financial data by period
         """
-        return self._normalize_api_data(financial_data, period_type)
+        # Extract all periods for fiscal year detection
+        all_periods = []
+        for category in financial_data:
+            for tag in financial_data[category]:
+                for fact in financial_data[category][tag]:
+                    if 'end' in fact:
+                        all_periods.append(fact['end'])
+        
+        return self._normalize_api_data(financial_data, period_type, all_periods, num_periods)

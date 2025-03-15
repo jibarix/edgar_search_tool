@@ -238,16 +238,33 @@ def run(params):
             return False
         
         # Parse the facts data to extract the requested statement type
+        print(f"Parsing financial data for {params['num_periods']} {params['period_type']} period(s)...")
         normalized_data = xbrl_parser.parse_company_facts(
             facts_data, 
             params["statement_type"],
-            params["period_type"]
+            params["period_type"],
+            params["num_periods"]
         )
         
         if not normalized_data or not normalized_data.get("periods") or not normalized_data.get("metrics"):
             print("\nInsufficient financial data for the requested statement type.")
             print("Try a different statement type or company.")
             return False
+        
+        # Display periods found
+        found_periods = normalized_data.get("periods", [])
+        if found_periods:
+            # Format periods for display
+            fiscal_month = normalized_data.get("metadata", {}).get("fiscal_month", "12")
+            formatted_periods = []
+            for period in found_periods:
+                date_obj = datetime.strptime(period, "%Y-%m-%d")
+                if period.split('-')[1] == fiscal_month:
+                    formatted_periods.append(f"FY {date_obj.year}")
+                else:
+                    formatted_periods.append(date_obj.strftime("%b %d, %Y"))
+            
+            print(f"Found data for {len(found_periods)} period(s): {', '.join(formatted_periods)}")
         
         # Format and output the data
         output = data_formatter.format_statement(
