@@ -97,6 +97,41 @@ def setup_args():
     return parser.parse_args()
 
 
+def display_options_summary(params):
+    """
+    Display a summary of the selected options.
+    
+    Args:
+        params (dict): Parameters for the retrieval process
+    """
+    print("\n" + "=" * 60)
+    print("  EDGAR Financial Tool - Options Summary")
+    print("=" * 60)
+    
+    print(f"\nCompany: {params['company_name']} (CIK: {params['cik']})")
+    
+    # Get statement type full name
+    statement_type_name = FINANCIAL_STATEMENT_TYPES.get(params['statement_type'], params['statement_type'])
+    print(f"Statement Type: {statement_type_name} ({params['statement_type']})")
+    
+    # Get period type full name
+    period_type_name = REPORTING_PERIODS.get(params['period_type'], params['period_type']).lower()
+    print(f"Period Type: {period_type_name}")
+    print(f"Number of Periods: {params['num_periods']}")
+    
+    print(f"Output Format: {params['output_format']}")
+    print(f"Output File: {'Auto-generated' if not params['output_file'] else params['output_file']}")
+    
+    print("\n" + "=" * 60)
+    
+    # Ask for confirmation if in interactive mode
+    if params.get('interactive_mode', False):
+        confirm = input("\nProceed with these options? (Y/n): ").strip().lower()
+        if confirm and confirm != 'y':
+            print("\nOperation cancelled by user.")
+            sys.exit(0)
+
+
 def interactive_mode():
     """
     Run the tool in interactive mode.
@@ -177,9 +212,16 @@ def interactive_mode():
     try:
         num_periods = int(num_periods_input)
         
-        if not is_valid_number_of_periods(num_periods, period_type):
-            print(f"Invalid number of periods. Using default ({default_periods}).")
+        # Accept any positive number as valid
+        if num_periods <= 0:
+            print(f"Number of periods must be positive. Using default ({default_periods}).")
             num_periods = default_periods
+            
+        # Just warn about large values but still use the requested number
+        if num_periods > 10 and period_type == "annual":
+            print("Warning: Requesting a large number of annual periods. Some older periods may not be available.")
+        elif num_periods > 20 and period_type != "annual":
+            print("Warning: Requesting a large number of periods. Some older periods may not be available.")
     except ValueError:
         print(f"Invalid input. Using default ({default_periods}).")
         num_periods = default_periods
@@ -205,7 +247,8 @@ def interactive_mode():
         "period_type": period_type,
         "num_periods": num_periods,
         "output_format": output_format,
-        "output_file": output_file if output_file else None
+        "output_file": output_file if output_file else None,
+        "interactive_mode": True
     }
 
 
@@ -220,6 +263,9 @@ def run(params):
         bool: True if successful, False otherwise
     """
     try:
+        # Display options summary
+        display_options_summary(params)
+        
         # Initialize components
         filing_retrieval = FilingRetrieval()
         xbrl_parser = XBRLParser()
@@ -335,7 +381,8 @@ def main():
             "period_type": args.period_type,
             "num_periods": num_periods,
             "output_format": args.output_format,
-            "output_file": args.output_file
+            "output_file": args.output_file,
+            "interactive_mode": False
         }
     
     # Run the tool with the provided parameters

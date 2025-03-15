@@ -79,12 +79,20 @@ class DataFormatter:
                 
                 if period.split('-')[1] == fiscal_month:
                     # This is a fiscal year end date
-                    if period_type == 'annual':
+                    if period_type == 'annual' or period_type == 'ytd':
                         return f"FY {date_obj.year}"
                     else:
                         # For quarterly periods
                         return f"Q{(date_obj.month % 3) or 4} {date_obj.year}"
+                else:
+                    # Not a fiscal year end - use the quarter if this is quarterly data
+                    if period_type == 'quarterly':
+                        return f"Q{(date_obj.month % 3) or 4} {date_obj.year}"
             
+            # Default formatting - use FY for annual data
+            if metadata and metadata.get('period_type') == 'annual':
+                return f"FY {date_obj.year}"
+                
             # Default formatting
             return date_obj.strftime("%b %d, %Y")
         except ValueError:
@@ -118,18 +126,25 @@ class DataFormatter:
             metrics_by_category[category].append((metric_key, metric_data))
         
         # Add each metric to the DataFrame data
-        for category, metrics in metrics_by_category.items():
+        for category in sorted(metrics_by_category.keys()):
             # Add category header
             df_data.append({
                 'Metric': f"--- {category} ---",
                 **{formatted_periods[period]: "" for period in data['periods']}
             })
             
+            # Sort metrics in this category by their order value
+            sorted_metrics = sorted(metrics_by_category[category], 
+                                   key=lambda x: x[1].get('order', 50))
+            
             # Add metrics in this category
-            for metric_key, metric_data in metrics:
-                # Clean up metric name for display
-                display_name = metric_key.split('_', 1)[1]
-                display_name = ' '.join(word.capitalize() for word in display_name.split())
+            for metric_key, metric_data in sorted_metrics:
+                # Use the display name if available, otherwise use the metric key
+                display_name = metric_data.get('display_name')
+                if not display_name:
+                    # Clean up metric name for display
+                    display_name = metric_key.split('_', 1)[1]
+                    display_name = ' '.join(word.capitalize() for word in display_name.split())
                 
                 row_data = {'Metric': display_name}
                 
@@ -194,8 +209,8 @@ class DataFormatter:
         # Apply formatting
         formatted_df = self._format_dataframe(df)
         
-        # Add metadata
-        if company_name:
+        # Add company name if not already present
+        if company_name and 'Company' not in formatted_df.columns:
             formatted_df.insert(0, 'Company', company_name)
         
         # Output based on format
@@ -379,16 +394,40 @@ class DataFormatter:
                 'bg_color': '#E0E0E0'
             })
             
-            # Apply formatting to category rows
+            # Format for financial data cells
+            number_format = workbook.add_format({
+                'num_format': '#,##0.00_);(#,##0.00)',
+                'align': 'right'
+            })
+            
+            # Apply formatting to rows
             for row_num, row_data in enumerate(df.values, start=header_row+1):
-                if isinstance(row_data[0], str) and row_data[0].startswith('---'):
-                    for col_num in range(len(row_data)):
-                        worksheet.write(row_num, col_num, row_data[col_num], category_format)
+                for col_num, cell_value in enumerate(row_data):
+                    # Skip company name column
+                    if col_num == 0 and 'Company' in df.columns:
+                        continue
+                    
+                    # Skip metric name column
+                    metric_col = 0 if 'Company' not in df.columns else 1
+                    if col_num == metric_col:
+                        # Check if this is a category row
+                        if isinstance(cell_value, str) and cell_value.startswith('---'):
+                            for i in range(len(row_data)):
+                                worksheet.write(row_num, i, row_data[i], category_format)
+                            break
+                        continue
+                    
+                    # Format numbers in other columns
+                    if isinstance(cell_value, (int, float)) or (isinstance(cell_value, str) and 
+                                                              any(c.isdigit() for c in cell_value)):
+                        worksheet.write(row_num, col_num, cell_value, number_format)
             
             # Auto-adjust column widths
             for i, col in enumerate(df.columns):
+                # Calculate the maximum length
                 max_len = max(df[col].astype(str).apply(len).max(),
                               len(str(col)))
+                # Set width with some extra padding
                 worksheet.set_column(i, i, max_len + 2)
         
         logger.info(f"Excel output saved to {output_file}")
@@ -416,8 +455,21 @@ class DataFormatter:
         header_border = "=" * min(len(header) + 4, TERMINAL_WIDTH)
         formatted_header = f"\n{header_border}\n  {header}  \n{header_border}\n"
         
+        # Create a copy of the DataFrame for display formatting
+        display_df = df.copy()
+        
+        # Identify category rows
+        category_rows = []
+        for i, row in display_df.iterrows():
+            metric_col = 'Metric'
+            if isinstance(row[metric_col], str) and row[metric_col].startswith('---'):
+                category_name = row[metric_col].strip('- ')
+                # Replace the category marker with a better formatted version
+                display_df.at[i, metric_col] = f"{category_name.upper()}:"
+                category_rows.append(i)
+        
         # Format the table
-        table = tabulate(df, headers="keys", tablefmt="grid", showindex=False)
+        table = tabulate(display_df, headers="keys", tablefmt="grid", showindex=False)
         
         # Combine and return
         return f"{formatted_header}\n{table}"

@@ -63,7 +63,8 @@ class XBRLParser:
             ]
             concept_groups['Liabilities'] = [
                 'Liabilities', 'LiabilitiesCurrent', 'LiabilitiesNoncurrent',
-                'AccountsPayable', 'AccountsPayableCurrent', 'LongTermDebt'
+                'AccountsPayable', 'AccountsPayableCurrent', 
+                'LongTermDebt', 'LongTermDebtNoncurrent'
             ]
             concept_groups['Equity'] = [
                 'StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
@@ -195,14 +196,17 @@ class XBRLParser:
         # Fill in data for each period
         for category in financial_data:
             for tag in financial_data[category]:
-                # Create a simplified tag name
-                simple_tag = tag.split(':')[-1]
-                metric_key = f"{category}_{simple_tag}"
+                # Create a human-readable label from the tag
+                concept_name = tag.split(':')[-1]
+                formatted_label = self._format_concept_name(concept_name)
+                metric_key = f"{category}_{formatted_label}"
                 
                 normalized_data['metrics'][metric_key] = {
                     'values': {},
                     'category': category,
-                    'tag': tag
+                    'tag': tag,
+                    'display_name': formatted_label,
+                    'order': self._get_concept_order(concept_name, category)
                 }
                 
                 # Find values for each period
@@ -215,6 +219,25 @@ class XBRLParser:
                             value = fact['val']
                             break
                     
+                    # Deal with CommonStockValue specially (many companies report it differently)
+                    if concept_name == "CommonStockValue" and value is None:
+                        # Provide a standard default value
+                        value = "N/A"  # Use N/A instead of blank for display purposes
+                    
+                    # For accounts payable, if total is missing, try to calculate it
+                    if concept_name == "AccountsPayable" and value is None and "AccountsPayableCurrent" in found_concepts:
+                        try:
+                            # Look for current accounts payable in the same period
+                            for other_tag, other_data in financial_data[category].items():
+                                if "AccountsPayableCurrent" in other_tag:
+                                    for other_fact in other_data:
+                                        if other_fact['end'] == period and 'val' in other_fact:
+                                            # Found current accounts payable, use it as a substitute
+                                            value = other_fact['val']
+                                            break
+                        except Exception as e:
+                            logger.warning(f"Error calculating total accounts payable: {e}")
+                    
                     normalized_data['metrics'][metric_key]['values'][period] = value
         
         # Add fiscal year metadata to help with display
@@ -224,6 +247,124 @@ class XBRLParser:
         }
         
         return normalized_data
+    
+    def _format_concept_name(self, concept_name):
+        """
+        Format a concept name into a human-readable label.
+        
+        Args:
+            concept_name (str): Original concept name (e.g., 'AssetsCurrent')
+            
+        Returns:
+            str: Formatted label (e.g., 'Current Assets')
+        """
+        # Special case handling for common concepts
+        concept_labels = {
+            'Assets': 'Total Assets',
+            'AssetsCurrent': 'Current Assets',
+            'AssetsNoncurrent': 'Non-Current Assets',
+            'CashAndCashEquivalentsAtCarryingValue': 'Cash and Cash Equivalents',
+            'Liabilities': 'Total Liabilities',
+            'LiabilitiesCurrent': 'Current Liabilities',
+            'LiabilitiesNoncurrent': 'Non-Current Liabilities',
+            'AccountsPayable': 'Accounts Payable (Total)',
+            'AccountsPayableCurrent': 'Accounts Payable (Current)',
+            'LongTermDebt': 'Total Debt',
+            'LongTermDebtNoncurrent': 'Long-Term Debt',
+            'StockholdersEquity': 'Stockholders\' Equity',
+            'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest': 'Total Equity',
+            'RetainedEarningsAccumulatedDeficit': 'Retained Earnings',
+            'CommonStockValue': 'Common Stock',
+            'Revenues': 'Total Revenue',
+            'RevenueFromContractWithCustomer': 'Revenue from Contracts',
+            'RevenueFromContractWithCustomerExcludingAssessedTax': 'Revenue (Excluding Taxes)',
+            'SalesRevenueNet': 'Net Sales Revenue',
+            'NetIncomeLoss': 'Net Income',
+            'ProfitLoss': 'Profit/Loss',
+            'NetIncomeLossAvailableToCommonStockholdersBasic': 'Net Income to Common Stockholders',
+            'OperatingIncomeLoss': 'Operating Income',
+            'GrossProfit': 'Gross Profit',
+            'EarningsPerShareBasic': 'EPS (Basic)',
+            'EarningsPerShareDiluted': 'EPS (Diluted)',
+            'NetCashProvidedByUsedInOperatingActivities': 'Net Cash from Operations',
+            'NetCashProvidedByUsedInInvestingActivities': 'Net Cash from Investing',
+            'NetCashProvidedByUsedInFinancingActivities': 'Net Cash from Financing'
+        }
+        
+        if concept_name in concept_labels:
+            return concept_labels[concept_name]
+        
+        # Generic formatting for other concepts
+        # Insert spaces before capital letters
+        formatted = re.sub(r'([a-z])([A-Z])', r'\1 \2', concept_name)
+        # Handle acronyms (e.g., "EBITDA" shouldn't become "E B I T D A")
+        formatted = re.sub(r'([A-Z])([A-Z][a-z])', r'\1 \2', formatted)
+        
+        return formatted
+    
+    def _get_concept_order(self, concept_name, category):
+        """
+        Determine the display order for a concept within its category.
+        
+        Args:
+            concept_name (str): The concept name
+            category (str): The category name
+            
+        Returns:
+            int: The ordering value
+        """
+        # Standard ordering for Assets section
+        if category == 'Assets':
+            order_map = {
+                'Assets': 0,  # Total Assets comes first
+                'AssetsCurrent': 10,
+                'CashAndCashEquivalentsAtCarryingValue': 20,
+                'AssetsNoncurrent': 100,
+            }
+            return order_map.get(concept_name, 50)  # Default order
+            
+        # Standard ordering for Liabilities section
+        elif category == 'Liabilities':
+            order_map = {
+                'Liabilities': 0,  # Total Liabilities comes first
+                'LiabilitiesCurrent': 10,
+                'AccountsPayableCurrent': 20,
+                'AccountsPayable': 25,  # Make sure this comes after AccountsPayableCurrent
+                'LiabilitiesNoncurrent': 100,
+                'LongTermDebt': 110
+            }
+            return order_map.get(concept_name, 50)  # Default order
+            
+        # Standard ordering for Equity section
+        elif category == 'Equity':
+            order_map = {
+                'StockholdersEquity': 0,  # Total Equity comes first
+                'CommonStockValue': 10,
+                'RetainedEarningsAccumulatedDeficit': 20
+            }
+            return order_map.get(concept_name, 50)  # Default order
+            
+        # Standard ordering for Income section
+        elif category == 'Revenue' or category == 'Income':
+            order_map = {
+                'Revenues': 0,
+                'SalesRevenueNet': 10,
+                'GrossProfit': 20, 
+                'OperatingIncomeLoss': 30,
+                'NetIncomeLoss': 40
+            }
+            return order_map.get(concept_name, 50)  # Default order
+            
+        # Standard ordering for EPS section
+        elif category == 'EPS':
+            order_map = {
+                'EarningsPerShareBasic': 0,
+                'EarningsPerShareDiluted': 10
+            }
+            return order_map.get(concept_name, 50)  # Default order
+        
+        # Default ordering for other categories
+        return 50
     
     def _detect_fiscal_year_end(self, all_periods):
         """
