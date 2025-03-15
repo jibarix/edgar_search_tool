@@ -1,7 +1,8 @@
 """
-EDGAR Financial Tool - Main Module.
+EDGAR Financial Tool - Main Module
 
-This is the main entry point for the EDGAR Financial Tool.
+A Python-based tool that interacts with the SEC's EDGAR database to retrieve
+financial statements for public companies.
 """
 
 import os
@@ -10,7 +11,7 @@ import logging
 import argparse
 from datetime import datetime
 
-from config.constants import FINANCIAL_STATEMENT_TYPES, REPORTING_PERIODS, ERROR_MESSAGES
+from config.constants import FINANCIAL_STATEMENT_TYPES, REPORTING_PERIODS
 from config.settings import (
     DEFAULT_OUTPUT_FORMAT, SUPPORTED_OUTPUT_FORMATS, 
     DEFAULT_ANNUAL_PERIODS, DEFAULT_QUARTERLY_PERIODS,
@@ -21,14 +22,10 @@ from edgar.company_lookup import search_company, get_cik_by_company_name
 from edgar.filing_retrieval import FilingRetrieval
 from edgar.xbrl_parser import XBRLParser
 from edgar.data_formatter import DataFormatter
+from edgar.statement_extractor import StatementExtractor
 
-from utils.validators import (
-    is_valid_company_name, is_valid_cik, 
-    is_valid_statement_type, is_valid_reporting_period,
-    is_valid_number_of_periods, is_valid_output_format
-)
-
-# Set up logging
+# Configure logging
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL),
     format=LOG_FORMAT,
@@ -38,18 +35,127 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
-
-# Initialize logger
 logger = logging.getLogger(__name__)
 
 
-def setup_args():
-    """
-    Set up command-line arguments.
+def interactive_mode():
+    """Run the tool in interactive mode with user prompts."""
+    print("\n" + "=" * 60)
+    print("  EDGAR Financial Tool - Interactive Mode")
+    print("=" * 60 + "\n")
     
-    Returns:
-        argparse.Namespace: Parsed arguments
-    """
+    # Step 1: Company Selection
+    company_name = input("Enter company name or ticker symbol: ")
+    
+    # Search for the company
+    matches = search_company(company_name)
+    
+    if not matches:
+        print(f"No matches found for '{company_name}'.")
+        return None
+    
+    # If multiple matches, let user choose
+    if len(matches) > 1:
+        print(f"\nFound {len(matches)} matches for '{company_name}':")
+        for i, match in enumerate(matches, 1):
+            print(f"{i}. {match['name']} (Ticker: {match['ticker']}, CIK: {match['cik']})")
+        
+        choice = int(input("\nSelect the correct company (or 0 to cancel): ") or "0")
+        if choice == 0:
+            return None
+        if 1 <= choice <= len(matches):
+            selected = matches[choice-1]
+        else:
+            print("Invalid selection.")
+            return None
+    else:
+        selected = matches[0]
+    
+    cik = selected["cik"]
+    company_name = selected["name"]
+    ticker = selected["ticker"]
+    
+    print(f"\nSelected: {company_name} (Ticker: {ticker}, CIK: {cik})")
+    
+    # Step 2: Financial Statement Selection
+    print("\nSelect financial statement type:")
+    print("1. Balance Sheet (BS)")
+    print("2. Income Statement (IS)")
+    print("3. Cash Flow Statement (CF)")
+    print("4. All Financial Statements (ALL)")
+    
+    statement_choice = input("\nEnter choice [1-4] (default: 4): ") or "4"
+    
+    statement_map = {
+        "1": "BS",
+        "2": "IS",
+        "3": "CF",
+        "4": "ALL"
+    }
+    
+    statement_type = statement_map.get(statement_choice, "ALL")
+    
+    # Step 3: Report Type Selection
+    print("\nSelect report type:")
+    print("1. Annual Reports (10-K)")
+    print("2. Quarterly Reports (10-Q)")
+    
+    report_type_choice = input("\nEnter choice [1-2] (default: 1): ") or "1"
+    period_type = "annual" if report_type_choice == "1" else "quarterly"
+    
+    # Step 4: Number of Periods
+    default_periods = DEFAULT_ANNUAL_PERIODS if period_type == "annual" else DEFAULT_QUARTERLY_PERIODS
+    num_periods = int(input(f"\nNumber of periods to retrieve (default: {default_periods}): ") or default_periods)
+    
+    # Step 5: Output Format
+    print("\nSelect output format:")
+    for i, fmt in enumerate(SUPPORTED_OUTPUT_FORMATS, 1):
+        print(f"{i}. {fmt.capitalize()}")
+    
+    format_choice = input(f"\nEnter choice [1-{len(SUPPORTED_OUTPUT_FORMATS)}] (default: 1): ") or "1"
+    
+    # Handle both numeric choices and direct text input
+    try:
+        choice_idx = int(format_choice) - 1
+        if 0 <= choice_idx < len(SUPPORTED_OUTPUT_FORMATS):
+            output_format = SUPPORTED_OUTPUT_FORMATS[choice_idx]
+        else:
+            output_format = SUPPORTED_OUTPUT_FORMATS[0]  # Default to first option
+    except ValueError:
+        # If user entered the format name directly
+        format_choice = format_choice.lower()
+        if format_choice in SUPPORTED_OUTPUT_FORMATS:
+            output_format = format_choice
+        else:
+            output_format = SUPPORTED_OUTPUT_FORMATS[0]  # Default to first option
+    
+    output_file = None
+    if output_format != "console":
+        default_file = f"{ticker.lower()}_{statement_type.lower()}_{period_type}_{datetime.now().strftime('%Y%m%d')}"
+        if output_format == "excel":
+            default_file += ".xlsx"
+        elif output_format == "csv":
+            default_file += ".csv"
+        elif output_format == "json":
+            default_file += ".json"
+            
+        file_input = input(f"\nOutput file (default: {default_file}): ")
+        output_file = file_input if file_input else default_file
+    
+    return {
+        "company_name": company_name,
+        "ticker": ticker,
+        "cik": cik,
+        "statement_type": statement_type,
+        "period_type": period_type,
+        "num_periods": num_periods,
+        "output_format": output_format,
+        "output_file": output_file
+    }
+
+
+def setup_args():
+    """Set up command-line arguments."""
     parser = argparse.ArgumentParser(
         description="EDGAR Financial Tool - Retrieve and analyze financial statements from SEC EDGAR"
     )
@@ -93,280 +199,116 @@ def setup_args():
         help="Output file path (default: auto-generated)"
     )
     
-    # Parse arguments
     return parser.parse_args()
 
 
-def display_options_summary(params):
+def extract_financial_statements(params):
     """
-    Display a summary of the selected options.
+    Extract financial statements based on user parameters.
     
     Args:
-        params (dict): Parameters for the retrieval process
-    """
-    print("\n" + "=" * 60)
-    print("  EDGAR Financial Tool - Options Summary")
-    print("=" * 60)
-    
-    print(f"\nCompany: {params['company_name']} (CIK: {params['cik']})")
-    
-    # Get statement type full name
-    statement_type_name = FINANCIAL_STATEMENT_TYPES.get(params['statement_type'], params['statement_type'])
-    print(f"Statement Type: {statement_type_name} ({params['statement_type']})")
-    
-    # Get period type full name
-    period_type_name = REPORTING_PERIODS.get(params['period_type'], params['period_type']).lower()
-    print(f"Period Type: {period_type_name}")
-    print(f"Number of Periods: {params['num_periods']}")
-    
-    print(f"Output Format: {params['output_format']}")
-    print(f"Output File: {'Auto-generated' if not params['output_file'] else params['output_file']}")
-    
-    print("\n" + "=" * 60)
-    
-    # Ask for confirmation if in interactive mode
-    if params.get('interactive_mode', False):
-        confirm = input("\nProceed with these options? (Y/n): ").strip().lower()
-        if confirm and confirm != 'y':
-            print("\nOperation cancelled by user.")
-            sys.exit(0)
-
-
-def interactive_mode():
-    """
-    Run the tool in interactive mode.
+        params (dict): User-provided parameters
     
     Returns:
-        dict: User-provided parameters
-    """
-    print("\n" + "=" * 60)
-    print("  EDGAR Financial Tool - Interactive Mode")
-    print("=" * 60 + "\n")
-    
-    # Company selection
-    company_name = input("Enter company name or ticker: ")
-    
-    while not is_valid_company_name(company_name):
-        print("Invalid company name. Please enter a valid company name or ticker.")
-        company_name = input("Enter company name or ticker: ")
-    
-    # Search for the company
-    matches = search_company(company_name)
-    
-    if not matches:
-        print(ERROR_MESSAGES["COMPANY_NOT_FOUND"])
-        return None
-    
-    cik = None
-    
-    # If multiple matches, let user choose
-    if len(matches) > 1:
-        print(f"\nFound {len(matches)} matches for '{company_name}':")
-        for i, match in enumerate(matches, 1):
-            print(f"{i}. {match['name']} (Ticker: {match['ticker']}, CIK: {match['cik']})")
-        
-        while True:
-            try:
-                choice = int(input("\nEnter the number of the correct company (0 to cancel): "))
-                if choice == 0:
-                    return None
-                if 1 <= choice <= len(matches):
-                    cik = matches[choice-1]["cik"]
-                    company_name = matches[choice-1]["name"]
-                    break
-                print("Invalid choice, please try again.")
-            except ValueError:
-                print("Please enter a valid number.")
-    else:
-        cik = matches[0]["cik"]
-        company_name = matches[0]["name"]
-    
-    print(f"\nSelected: {company_name} (CIK: {cik})")
-    
-    # Statement type selection
-    print("\nAvailable financial statement types:")
-    for code, name in FINANCIAL_STATEMENT_TYPES.items():
-        print(f"{code}: {name}")
-    
-    statement_type = input("\nEnter financial statement type (default: ALL): ").upper() or "ALL"
-    
-    while not is_valid_statement_type(statement_type):
-        print("Invalid statement type. Please enter a valid type.")
-        statement_type = input("Enter financial statement type (default: ALL): ").upper() or "ALL"
-    
-    # Reporting period selection
-    print("\nReporting period options:")
-    for code, name in REPORTING_PERIODS.items():
-        print(f"{code}: {name}")
-    
-    period_type = input("\nEnter reporting period type (default: annual): ").lower() or "annual"
-    
-    while not is_valid_reporting_period(period_type):
-        print("Invalid period type. Please enter a valid type.")
-        period_type = input("Enter reporting period type (default: annual): ").lower() or "annual"
-    
-    # Number of periods
-    default_periods = DEFAULT_ANNUAL_PERIODS if period_type == "annual" else DEFAULT_QUARTERLY_PERIODS
-    num_periods_input = input(f"\nEnter number of periods to retrieve (default: {default_periods}): ") or str(default_periods)
-    
-    try:
-        num_periods = int(num_periods_input)
-        
-        # Accept any positive number as valid
-        if num_periods <= 0:
-            print(f"Number of periods must be positive. Using default ({default_periods}).")
-            num_periods = default_periods
-            
-        # Just warn about large values but still use the requested number
-        if num_periods > 10 and period_type == "annual":
-            print("Warning: Requesting a large number of annual periods. Some older periods may not be available.")
-        elif num_periods > 20 and period_type != "annual":
-            print("Warning: Requesting a large number of periods. Some older periods may not be available.")
-    except ValueError:
-        print(f"Invalid input. Using default ({default_periods}).")
-        num_periods = default_periods
-    
-    # Output format
-    print("\nAvailable output formats:")
-    for fmt in SUPPORTED_OUTPUT_FORMATS:
-        print(f"- {fmt}")
-    
-    output_format = input(f"\nEnter output format (default: {DEFAULT_OUTPUT_FORMAT}): ").lower() or DEFAULT_OUTPUT_FORMAT
-    
-    while not is_valid_output_format(output_format):
-        print("Invalid output format. Please enter a valid format.")
-        output_format = input(f"Enter output format (default: {DEFAULT_OUTPUT_FORMAT}): ").lower() or DEFAULT_OUTPUT_FORMAT
-    
-    # Output file path (optional)
-    output_file = input("\nEnter output file path (leave blank for auto-generated): ")
-    
-    return {
-        "company_name": company_name,
-        "cik": cik,
-        "statement_type": statement_type,
-        "period_type": period_type,
-        "num_periods": num_periods,
-        "output_format": output_format,
-        "output_file": output_file if output_file else None,
-        "interactive_mode": True
-    }
-
-
-def run(params):
-    """
-    Run the EDGAR financial data retrieval process.
-    
-    Args:
-        params (dict): Parameters for the retrieval process
-        
-    Returns:
-        bool: True if successful, False otherwise
+        dict: Extracted financial data
     """
     try:
-        # Display options summary
-        display_options_summary(params)
-        
         # Initialize components
         filing_retrieval = FilingRetrieval()
         xbrl_parser = XBRLParser()
-        data_formatter = DataFormatter(params["output_format"])
+        statement_extractor = StatementExtractor()
         
         print(f"\nRetrieving {params['statement_type']} for {params['company_name']} ({params['cik']})...")
         
-        # Use the SEC API approach to get financial data
-        print("Fetching financial data from SEC API...")
+        # Determine filing type based on period type
+        filing_type = "10-K" if params["period_type"] == "annual" else "10-Q"
         
-        # Get all financial facts for the company
-        facts_data = filing_retrieval.get_company_facts(params["cik"])
-        
-        if not facts_data:
-            print("\nNo financial data found for the company. Please check the CIK number.")
-            return False
-        
-        # Parse the facts data to extract the requested statement type
-        print(f"Parsing financial data for {params['num_periods']} {params['period_type']} period(s)...")
-        normalized_data = xbrl_parser.parse_company_facts(
-            facts_data, 
-            params["statement_type"],
-            params["period_type"],
-            params["num_periods"]
+        # Get filing metadata
+        filings = filing_retrieval.get_filing_metadata(
+            params["cik"], 
+            filing_type=filing_type, 
+            limit=params["num_periods"]
         )
         
-        if not normalized_data or not normalized_data.get("periods") or not normalized_data.get("metrics"):
-            print("\nInsufficient financial data for the requested statement type.")
-            print("Try a different statement type or company.")
-            return False
+        if not filings:
+            print(f"No {filing_type} filings found for {params['company_name']}.")
+            return None
         
-        # Display periods found
-        found_periods = normalized_data.get("periods", [])
-        if found_periods:
-            # Format periods for display
-            fiscal_month = normalized_data.get("metadata", {}).get("fiscal_month", "12")
-            formatted_periods = []
-            for period in found_periods:
-                date_obj = datetime.strptime(period, "%Y-%m-%d")
-                if period.split('-')[1] == fiscal_month:
-                    formatted_periods.append(f"FY {date_obj.year}")
-                else:
-                    formatted_periods.append(date_obj.strftime("%b %d, %Y"))
+        print(f"Found {len(filings)} {filing_type} filings.")
+        
+        # Choose approach based on statement type and period
+        if params["statement_type"] in ["BS", "IS", "CF"]:
+            # Use statement extractor for individual statements
+            financial_data = {}
             
-            print(f"Found data for {len(found_periods)} period(s): {', '.join(formatted_periods)}")
-        
-        # Format and output the data
-        output = data_formatter.format_statement(
-            normalized_data,
-            params["statement_type"],
-            params["company_name"],
-            params["output_file"]
-        )
-        
-        if output:
-            if params["output_format"] in ["csv", "json", "excel"]:
-                print(f"\nOutput saved to: {output}")
-            else:
-                print(output)
+            for filing in filings[:params["num_periods"]]:
+                print(f"Processing filing from {filing['filing_date']}...")
+                filing_data = statement_extractor.extract_statement(
+                    params["ticker"], 
+                    filing["accession_number"], 
+                    params["statement_type"]
+                )
+                if filing_data is not None:
+                    financial_data[filing["filing_date"]] = filing_data
             
-            return True
+            if not financial_data:
+                # Fall back to XBRL data
+                print("Falling back to XBRL data extraction...")
+                facts_data = filing_retrieval.get_company_facts(params["cik"])
+                if facts_data:
+                    financial_data = xbrl_parser.parse_company_facts(
+                        facts_data,
+                        params["statement_type"],
+                        params["period_type"],
+                        params["num_periods"]
+                    )
         else:
-            print("\nError formatting the financial data.")
-            return False
-            
+            # Use XBRL parser for comprehensive data
+            facts_data = filing_retrieval.get_company_facts(params["cik"])
+            if facts_data:
+                financial_data = xbrl_parser.parse_company_facts(
+                    facts_data,
+                    params["statement_type"],
+                    params["period_type"],
+                    params["num_periods"]
+                )
+            else:
+                print("Failed to retrieve XBRL data for the company.")
+                return None
+        
+        return financial_data
+    
     except Exception as e:
-        logger.error(f"Error in EDGAR financial data retrieval: {e}", exc_info=True)
-        print(f"\nError: {str(e)}")
-        return False
+        logger.error(f"Error extracting financial statements: {e}", exc_info=True)
+        print(f"Error: {str(e)}")
+        return None
 
+
+# Update the main.py file to properly display console output
 
 def main():
     """Main entry point for the EDGAR Financial Tool."""
-    # Check for command-line arguments
     args = setup_args()
     
-    # If company or CIK not provided, use interactive mode
+    # If no command-line arguments provided, use interactive mode
     if not args.company and not args.cik:
         params = interactive_mode()
-        
         if not params:
             print("\nOperation cancelled.")
             return
     else:
-        # Use command-line arguments
+        # Process command-line arguments
         if args.cik:
-            # Use provided CIK
-            if not is_valid_cik(args.cik):
-                print(ERROR_MESSAGES["INVALID_CIK"])
-                return
-            
             cik = args.cik
-            company_name = f"Company CIK {cik}"
-        else:
-            # Look up CIK from company name
+            company_name = f"CIK {cik}"
+            # Try to find ticker from CIK
+            ticker = "UNKNOWN"
+        elif args.company:
             cik = get_cik_by_company_name(args.company)
-            
             if not cik:
                 return
-                
             company_name = args.company
+            ticker = args.company  # Simplified, would need to look up actual ticker
         
         # Determine default number of periods
         if args.num_periods:
@@ -376,22 +318,49 @@ def main():
         
         params = {
             "company_name": company_name,
+            "ticker": ticker,
             "cik": cik,
             "statement_type": args.statement_type,
             "period_type": args.period_type,
             "num_periods": num_periods,
             "output_format": args.output_format,
-            "output_file": args.output_file,
-            "interactive_mode": False
+            "output_file": args.output_file
         }
     
-    # Run the tool with the provided parameters
-    success = run(params)
+    # Display summary of selected options
+    print("\n" + "=" * 60)
+    print("  EDGAR Financial Tool - Request Summary")
+    print("=" * 60)
+    print(f"Company: {params['company_name']} (CIK: {params['cik']})")
+    print(f"Statement Type: {FINANCIAL_STATEMENT_TYPES.get(params['statement_type'], params['statement_type'])}")
+    print(f"Period Type: {REPORTING_PERIODS.get(params['period_type'], params['period_type'])}")
+    print(f"Number of Periods: {params['num_periods']}")
+    print(f"Output Format: {params['output_format']}")
+    print("=" * 60 + "\n")
     
-    if success:
-        print("\nOperation completed successfully.")
-    else:
-        print("\nOperation failed. See messages above for details.")
+    # Extract and process financial data
+    financial_data = extract_financial_statements(params)
+    
+    if not financial_data:
+        print("\nFailed to extract financial statements. See error messages above.")
+        return
+    
+    # Format and output the data
+    formatter = DataFormatter(params["output_format"])
+    output = formatter.format_statement(
+        financial_data,
+        params["statement_type"],
+        params["company_name"],
+        params["output_file"]
+    )
+    
+    if params["output_format"] == "console" and output:
+        # Print the formatted console output directly
+        print(output)
+    elif output and params["output_format"] != "console":
+        print(f"\nOutput saved to: {output}")
+    
+    print("\nOperation completed successfully.")
 
 
 if __name__ == "__main__":

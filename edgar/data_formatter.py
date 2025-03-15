@@ -117,6 +117,19 @@ class DataFormatter:
         formatted_periods = {period: self._format_period_header(period, metadata) 
                             for period in data['periods']}
         
+        # Define proper accounting order for categories
+        accounting_order = {
+            'Assets': 0,
+            'Liabilities': 1,
+            'Equity': 2,
+            'Revenue': 3,
+            'Income': 4,
+            'EPS': 5,
+            'OperatingCashFlow': 6,
+            'InvestingCashFlow': 7,
+            'FinancingCashFlow': 8
+        }
+        
         # Group metrics by category for better organization
         metrics_by_category = {}
         for metric_key, metric_data in data['metrics'].items():
@@ -125,8 +138,12 @@ class DataFormatter:
                 metrics_by_category[category] = []
             metrics_by_category[category].append((metric_key, metric_data))
         
+        # Use accounting_order to sort categories
+        sorted_categories = sorted(metrics_by_category.keys(), 
+                                  key=lambda x: accounting_order.get(x, 99))
+        
         # Add each metric to the DataFrame data
-        for category in sorted(metrics_by_category.keys()):
+        for category in sorted_categories:
             # Add category header
             df_data.append({
                 'Metric': f"--- {category} ---",
