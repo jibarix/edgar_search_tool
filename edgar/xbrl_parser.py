@@ -76,7 +76,10 @@ class XBRLParser:
             concept_groups['Equity'] = [
                 'StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
                 'RetainedEarningsAccumulatedDeficit', 'CommonStockValue', 'AdditionalPaidInCapital',
-                'TreasuryStockValue', 'AccumulatedOtherComprehensiveIncomeLossNetOfTax'
+                'TreasuryStockValue', 'AccumulatedOtherComprehensiveIncomeLossNetOfTax',
+                'CommonStockParOrStatedValuePerShare', 'CommonStocksIncludingAdditionalPaidInCapital',
+                'CommonStockSharesIssued', 'CommonStockSharesOutstanding',
+                'StockholdersEquityAttributableToParent'
             ]
         
         if statement_type == 'IS' or statement_type == 'ALL':
@@ -156,11 +159,11 @@ class XBRLParser:
                                     found_concepts.add(concept)
         
         # Normalize the data
-        normalized_data = self._normalize_api_data(financial_data, period_type, all_periods, num_periods, found_concepts)
+        normalized_data = self._normalize_api_data(financial_data, period_type, all_periods, num_periods, found_concepts, facts_data)
         logger.info(f"Retrieved data for {len(normalized_data['periods'])} periods: {normalized_data['periods']}")
         return normalized_data
     
-    def _normalize_api_data(self, financial_data, period_type, all_periods, num_periods, found_concepts):
+    def _normalize_api_data(self, financial_data, period_type, all_periods, num_periods, found_concepts, facts_data=None):
         """
         Normalize financial data from SEC API into a structured format.
         
@@ -170,6 +173,7 @@ class XBRLParser:
             all_periods (list): All period end dates found in the data
             num_periods (int): Number of periods to return
             found_concepts (set): Set of concepts found in the data
+            facts_data (dict): Original facts data from the API
             
         Returns:
             dict: Normalized financial data by period
@@ -236,8 +240,49 @@ class XBRLParser:
                     
                     # Deal with CommonStockValue specially (many companies report it differently)
                     if concept_name == "CommonStockValue" and value is None:
-                        # Provide a standard default value
-                        value = "N/A"  # Use N/A instead of blank for display purposes
+                        # Look for alternative tags for common stock
+                        common_stock_alternatives = [
+                            'CommonStocksIncludingAdditionalPaidInCapital',
+                            'CommonStockParOrStatedValuePerShare',
+                            'StockholdersEquityAttributableToParent'
+                        ]
+                        
+                        for alt_concept in common_stock_alternatives:
+                            if alt_concept in found_concepts:
+                                for tag, tag_data in financial_data[category].items():
+                                    if alt_concept in tag:
+                                        for tag_fact in tag_data:
+                                            if tag_fact['end'] == period and 'val' in tag_fact:
+                                                value = tag_fact['val']
+                                                break
+                                        if value is not None:
+                                            break
+                                if value is not None:
+                                    break
+                        
+                        # If still not found, look directly in the entity's financial data
+                        if value is None and facts_data:
+                            for taxonomy in ['us-gaap', 'ifrs-full']:
+                                if taxonomy not in facts_data.get('facts', {}):
+                                    continue
+                                    
+                                if value is not None:
+                                    break
+                                    
+                                for tag_name in ['CommonStock', 'CapitalStock', 'IssuedCapital']:
+                                    if tag_name in facts_data['facts'][taxonomy]:
+                                        for unit_type, facts in facts_data['facts'][taxonomy][tag_name].get('units', {}).items():
+                                            if unit_type == 'USD':
+                                                for fact in facts:
+                                                    if fact.get('end') == period:
+                                                        value = fact.get('val')
+                                                        break
+                                                if value is not None:
+                                                    break
+                        
+                        # If still not found, use 'N/A'
+                        if value is None:
+                            value = "N/A"  # Use N/A instead of blank for display purposes
                     
                     # For accounts payable, if total is missing, try to calculate it
                     if concept_name == "AccountsPayable" and value is None and "AccountsPayableCurrent" in found_concepts:
@@ -290,6 +335,9 @@ class XBRLParser:
             'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest': 'Total Equity',
             'RetainedEarningsAccumulatedDeficit': 'Retained Earnings',
             'CommonStockValue': 'Common Stock',
+            'CommonStocksIncludingAdditionalPaidInCapital': 'Common Stock',
+            'CommonStockParOrStatedValuePerShare': 'Common Stock',
+            'StockholdersEquityAttributableToParent': 'Common Stock',
             'Revenues': 'Total Revenue',
             'RevenueFromContractWithCustomer': 'Revenue from Contracts',
             'RevenueFromContractWithCustomerExcludingAssessedTax': 'Revenue (Excluding Taxes)',
@@ -368,6 +416,9 @@ class XBRLParser:
                 'StockholdersEquity': 0,  # Total Equity comes first
                 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest': 5,  # Total equity including non-controlling interest
                 'CommonStockValue': 10,  # Common stock
+                'CommonStocksIncludingAdditionalPaidInCapital': 10,  # Same priority as CommonStockValue
+                'CommonStockParOrStatedValuePerShare': 10,  # Same priority as CommonStockValue
+                'StockholdersEquityAttributableToParent': 10,  # Same priority as CommonStockValue
                 'AdditionalPaidInCapital': 15,  # Additional paid-in capital
                 'TreasuryStockValue': 18,  # Treasury stock
                 'RetainedEarningsAccumulatedDeficit': 20,  # Retained earnings/accumulated deficit

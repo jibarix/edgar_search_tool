@@ -190,9 +190,9 @@ class DataFormatter:
         # Format numeric columns
         for col in formatted_df.columns:
             if col != 'Metric':
-                # Apply formatting to numeric values
+                # Apply formatting to numeric values without scaling (no K, M, B suffixes)
                 formatted_df[col] = formatted_df[col].apply(
-                    lambda x: format_financial_number(x) if pd.notnull(x) and not isinstance(x, str) else x
+                    lambda x: format_financial_number(x, use_scaling=False) if pd.notnull(x) and not isinstance(x, str) else x
                 )
         
         return formatted_df
@@ -229,6 +229,10 @@ class DataFormatter:
         # Add company name if not already present
         if company_name and 'Company' not in formatted_df.columns:
             formatted_df.insert(0, 'Company', company_name)
+        
+        # Add balance sheet reconciliation if this is a balance sheet
+        if statement_type.upper() == 'BS':
+            formatted_df = self._add_balance_sheet_reconciliation(formatted_df, data)
         
         # Output based on format
         if self.output_format == 'csv':
@@ -490,3 +494,73 @@ class DataFormatter:
         
         # Combine and return
         return f"{formatted_header}\n{table}"
+    
+    def _add_balance_sheet_reconciliation(self, df, data):
+        """
+        Add a balance sheet reconciliation row to verify Assets = Liabilities + Equity.
+        
+        Args:
+            df (pandas.DataFrame): DataFrame with financial data
+            data (dict): The normalized financial data
+            
+        Returns:
+            pandas.DataFrame: DataFrame with added reconciliation row
+        """
+        # Only add reconciliation for balance sheets
+        if 'Assets' not in str(df['Metric'].values) or 'Liabilities' not in str(df['Metric'].values):
+            return df
+        
+        # Create a copy of the dataframe
+        new_df = df.copy()
+        
+        # For each period, calculate the reconciliation
+        period_columns = [col for col in df.columns if col not in ['Company', 'Metric']]
+        
+        for period in period_columns:
+            total_assets = None
+            total_liabilities = None
+            total_equity = None
+            
+            # Find the values
+            for idx, row in df.iterrows():
+                if row['Metric'] == 'Total Assets':
+                    try:
+                        # Handle formatted strings by removing commas
+                        total_assets = float(str(row[period]).replace(',', ''))
+                    except (ValueError, TypeError):
+                        total_assets = None
+                elif row['Metric'] == 'Total Liabilities':
+                    try:
+                        total_liabilities = float(str(row[period]).replace(',', ''))
+                    except (ValueError, TypeError):
+                        total_liabilities = None
+                elif row['Metric'] == 'Stockholders\' Equity' or row['Metric'] == 'Total Equity':
+                    try:
+                        total_equity = float(str(row[period]).replace(',', ''))
+                    except (ValueError, TypeError):
+                        total_equity = None
+        
+            # Calculate difference if all values are available
+            if total_assets is not None and total_liabilities is not None and total_equity is not None:
+                difference = total_assets - total_liabilities - total_equity
+                
+                # Format the difference
+                from utils.helpers import format_financial_number
+                formatted_diff = format_financial_number(difference)
+                
+                # Create a reconciliation row
+                reconciliation_data = {}
+                for col in df.columns:
+                    if col == 'Metric':
+                        reconciliation_data[col] = "Reconciliation (Assets - Liabilities - Equity)"
+                    elif col == 'Company':
+                        reconciliation_data[col] = df['Company'].iloc[0] if 'Company' in df else ""
+                    elif col == period:
+                        reconciliation_data[col] = formatted_diff
+                    else:
+                        reconciliation_data[col] = ""
+                
+                # Append to the dataframe
+                new_df = pd.concat([new_df, pd.DataFrame([reconciliation_data])], ignore_index=True)
+        
+        return new_df

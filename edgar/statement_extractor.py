@@ -268,7 +268,7 @@ class StatementExtractor:
                     continue
                 
                 # Initialize values array with NaNs
-                values = [np.NaN] * len(date_time_index)
+                values = [np.nan] * len(date_time_index)
                 
                 # Process each cell in the row
                 for i, cell in enumerate(row.select("td.text, td.nump, td.num")):

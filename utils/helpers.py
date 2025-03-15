@@ -118,28 +118,36 @@ def get_filing_dates(period_type, num_periods):
     return date_ranges
 
 
-def format_financial_number(number, decimals=2):
+def format_financial_number(number, decimals=0, use_commas=True, use_scaling=False):
     """
-    Format a financial number with appropriate scale (K, M, B).
+    Format a financial number with appropriate formatting.
     
     Args:
         number (float): The number to format
-        decimals (int): Number of decimal places
+        decimals (int): Number of decimal places (default: 0 for no decimals)
+        use_commas (bool): Whether to use thousand separators
+        use_scaling (bool): Whether to scale with K, M, B suffixes
         
     Returns:
-        str: Formatted number with scale suffix
+        str: Formatted number
     """
     if number is None:
         return "N/A"
         
     abs_number = abs(number)
     
-    if abs_number >= 1_000_000_000:
-        return f"{number / 1_000_000_000:.{decimals}f}B"
-    elif abs_number >= 1_000_000:
-        return f"{number / 1_000_000:.{decimals}f}M"
-    elif abs_number >= 1_000:
-        return f"{number / 1_000:.{decimals}f}K"
+    if use_scaling:
+        # Use scaling (K, M, B) if requested
+        if abs_number >= 1_000_000_000:
+            return f"{number / 1_000_000_000:.{decimals}f}B"
+        elif abs_number >= 1_000_000:
+            return f"{number / 1_000_000:.{decimals}f}M"
+        elif abs_number >= 1_000:
+            return f"{number / 1_000:.{decimals}f}K"
+    
+    # Format with commas if requested
+    if use_commas:
+        return f"{number:,.{decimals}f}"
     else:
         return f"{number:.{decimals}f}"
 
