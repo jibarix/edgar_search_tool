@@ -1,11 +1,11 @@
 """
-Parser for extracting financial data from SEC XBRL and JSON APIs.
+Enhanced parser for extracting financial data from SEC XBRL and JSON APIs.
 """
 
 import re
 import logging
 from datetime import datetime
-from collections import Counter
+from collections import Counter, defaultdict
 
 from config.constants import XBRL_TAGS, ERROR_MESSAGES
 from utils.cache import Cache
@@ -54,6 +54,10 @@ class XBRLParser:
             logger.error("No supported taxonomies found in company facts")
             return {}
         
+        # Get the entity information
+        entity_name = facts_data.get('entityName', '')
+        logger.info(f"Processing XBRL data for {entity_name}")
+        
         # Define concept groups based on statement type
         concept_groups = {}
         if statement_type == 'BS' or statement_type == 'ALL':
@@ -63,7 +67,11 @@ class XBRLParser:
                 'AccountsReceivableNet', 'InventoryNet', 'Inventory',
                 'PrepaidExpenseAndOtherAssetsCurrent', 'PropertyPlantAndEquipmentNet',
                 'Goodwill', 'IntangibleAssetsNet', 'MarketableSecuritiesCurrent',
-                'MarketableSecuritiesNoncurrent', 'OtherAssetsCurrent', 'OtherAssetsNoncurrent'
+                'MarketableSecuritiesNoncurrent', 'OtherAssetsCurrent', 'OtherAssetsNoncurrent',
+                # Add more asset concepts that companies might use
+                'CashAndCashEquivalents', 'AccountsReceivable', 'CurrentAssets',
+                'NoncurrentAssets', 'TotalAssets', 'AvailableForSaleSecurities',
+                'TradingSecurities', 'InvestmentsShortTerm', 'InvestmentsLongTerm'
             ]
             concept_groups['Liabilities'] = [
                 'Liabilities', 'LiabilitiesCurrent', 'LiabilitiesNoncurrent',
@@ -71,7 +79,12 @@ class XBRLParser:
                 'DeferredRevenueCurrent', 'DeferredRevenueNoncurrent',
                 'LongTermDebt', 'LongTermDebtNoncurrent', 'DeferredTaxLiabilitiesNoncurrent',
                 'CommercialPaper', 'ShortTermBorrowings', 'AccruedIncomeTaxesCurrent',
-                'OtherLiabilitiesCurrent', 'OtherLiabilitiesNoncurrent'
+                'OtherLiabilitiesCurrent', 'OtherLiabilitiesNoncurrent',
+                # Add more liability concepts
+                'CurrentLiabilities', 'NoncurrentLiabilities', 'TotalLiabilities',
+                'ShortTermDebt', 'DeferredRevenue', 'AccruedLiabilities',
+                'AccruedExpenses', 'NotesPayable', 'DebtCurrent',
+                'DebtLongTerm', 'LineOfCredit'
             ]
             concept_groups['Equity'] = [
                 'StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
@@ -79,31 +92,63 @@ class XBRLParser:
                 'TreasuryStockValue', 'AccumulatedOtherComprehensiveIncomeLossNetOfTax',
                 'CommonStockParOrStatedValuePerShare', 'CommonStocksIncludingAdditionalPaidInCapital',
                 'CommonStockSharesIssued', 'CommonStockSharesOutstanding',
-                'StockholdersEquityAttributableToParent'
+                'StockholdersEquityAttributableToParent',
+                # Add more equity concepts
+                'RetainedEarnings', 'TreasuryStock', 'TotalEquity',
+                'EquityAttributableToParent', 'EquityAttributableToNoncontrollingInterest',
+                'PreferredStockValue', 'PreferredStockSharesIssued'
             ]
         
         if statement_type == 'IS' or statement_type == 'ALL':
             concept_groups['Revenue'] = [
                 'Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax',
-                'SalesRevenueNet', 'RevenueFromContractWithCustomer'
+                'SalesRevenueNet', 'RevenueFromContractWithCustomer',
+                # Add more revenue concepts
+                'TotalRevenue', 'NetSales', 'ServiceRevenue', 'ProductRevenue',
+                'InterestAndDividendIncomeOperating', 'RealEstateRevenueNet',
+                'AdvertisingRevenue', 'SubscriptionRevenue'
             ]
             concept_groups['Income'] = [
                 'NetIncomeLoss', 'ProfitLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic',
-                'OperatingIncomeLoss', 'GrossProfit'
+                'OperatingIncomeLoss', 'GrossProfit',
+                # Add more income concepts
+                'IncomeLossFromContinuingOperationsBeforeIncomeTaxes',
+                'IncomeTaxExpenseBenefit', 'NetIncome', 'NetLoss',
+                'ComprehensiveIncomeNetOfTax', 'CostOfRevenue', 
+                'CostOfGoodsAndServicesSold', 'ResearchAndDevelopmentExpense',
+                'SellingGeneralAndAdministrativeExpense', 'InterestExpense'
             ]
             concept_groups['EPS'] = [
-                'EarningsPerShareBasic', 'EarningsPerShareDiluted'
+                'EarningsPerShareBasic', 'EarningsPerShareDiluted',
+                # Add more EPS concepts
+                'IncomeLossFromContinuingOperationsPerBasicShare',
+                'IncomeLossFromContinuingOperationsPerDilutedShare',
+                'IncomeLossFromDiscontinuedOperationsNetOfTaxPerBasicShare',
+                'IncomeLossFromDiscontinuedOperationsNetOfTaxPerDilutedShare'
             ]
         
         if statement_type == 'CF' or statement_type == 'ALL':
             concept_groups['OperatingCashFlow'] = [
-                'NetCashProvidedByUsedInOperatingActivities'
+                'NetCashProvidedByUsedInOperatingActivities',
+                # Add more operating cash flow concepts
+                'OperatingCashFlow', 'NetCashProvidedByOperatingActivities',
+                'NetCashUsedInOperatingActivities', 'CashFlowsFromOperatingActivities'
             ]
             concept_groups['InvestingCashFlow'] = [
-                'NetCashProvidedByUsedInInvestingActivities'
+                'NetCashProvidedByUsedInInvestingActivities',
+                # Add more investing cash flow concepts
+                'InvestingCashFlow', 'NetCashProvidedByInvestingActivities',
+                'NetCashUsedInInvestingActivities', 'CashFlowsFromInvestingActivities',
+                'PaymentsToAcquirePropertyPlantAndEquipment',
+                'PaymentsToAcquireBusinessesNetOfCashAcquired'
             ]
             concept_groups['FinancingCashFlow'] = [
-                'NetCashProvidedByUsedInFinancingActivities'
+                'NetCashProvidedByUsedInFinancingActivities',
+                # Add more financing cash flow concepts
+                'FinancingCashFlow', 'NetCashProvidedByFinancingActivities',
+                'NetCashUsedInFinancingActivities', 'CashFlowsFromFinancingActivities',
+                'PaymentsOfDividends', 'PaymentsForRepurchaseOfCommonStock',
+                'ProceedsFromIssuanceOfLongTermDebt'
             ]
         
         # Extract financial data
@@ -111,57 +156,67 @@ class XBRLParser:
         found_concepts = set()  # Track found concepts for later reference
         all_periods = []
         
+        # Create a mapping of all concepts to their values
+        concept_values = defaultdict(list)
+        
         for taxonomy in taxonomies:
-            for group, concepts in concept_groups.items():
-                if group not in financial_data:
-                    financial_data[group] = {}
+            for concept in facts_data['facts'].get(taxonomy, {}):
+                # Store the concept for later reference
+                found_concepts.add(concept)
                 
-                for concept in concepts:
-                    if concept in facts_data['facts'][taxonomy]:
-                        concept_data = facts_data['facts'][taxonomy][concept]
-                        units = concept_data.get('units', {})
+                # Extract units data
+                units = facts_data['facts'][taxonomy][concept].get('units', {})
+                
+                # Extract values for appropriate units
+                for unit_type, facts in units.items():
+                    # Skip non-monetary units for financial statement values
+                    if unit_type not in ['USD', 'USD/shares', 'pure']:
+                        continue
                         
-                        # Extract values for appropriate units (USD for monetary values, pure for ratios)
-                        for unit_type, facts in units.items():
-                            if ((unit_type == 'USD' and concept not in ['EarningsPerShareBasic', 'EarningsPerShareDiluted']) or
-                                (unit_type == 'USD/shares' and concept in ['EarningsPerShareBasic', 'EarningsPerShareDiluted']) or
-                                (unit_type == 'pure')):
-                                
-                                valid_facts = []
-                                
-                                for fact in facts:
-                                    # Check if the fact has required properties
-                                    if 'val' not in fact or 'end' not in fact:
-                                        continue
-                                    
-                                    # Collect end dates for later fiscal year analysis
-                                    all_periods.append(fact['end'])
-                                    
-                                    # Filter by period type
-                                    if 'start' in fact:  # Duration fact
-                                        # Estimate period length in days
-                                        start_date = datetime.fromisoformat(fact['start'].replace('Z', '+00:00'))
-                                        end_date = datetime.fromisoformat(fact['end'].replace('Z', '+00:00'))
-                                        period_length = (end_date - start_date).days
-                                        
-                                        if period_type == 'annual' and period_length >= 350:  # Annual report (approximately 1 year)
-                                            valid_facts.append(fact)
-                                        elif period_type == 'quarterly' and 80 <= period_length <= 100:  # Quarterly report (approximately 3 months)
-                                            valid_facts.append(fact)
-                                        elif period_type == 'ytd':  # Year-to-date report (any duration)
-                                            valid_facts.append(fact)
-                                    else:  # Instant fact (typically for balance sheet items)
-                                        valid_facts.append(fact)
-                                
-                                if valid_facts:
-                                    tag = f"{taxonomy}:{concept}"
-                                    financial_data[group][tag] = valid_facts
-                                    found_concepts.add(concept)
+                    for fact in facts:
+                        if 'val' not in fact or 'end' not in fact:
+                            continue
+                            
+                        # Store the period end date
+                        all_periods.append(fact['end'])
+                        
+                        # Store the value with its metadata
+                        concept_values[concept].append({
+                            'val': fact['val'],
+                            'end': fact['end'],
+                            'start': fact.get('start'),
+                            'unit': unit_type,
+                            'filed': fact.get('filed'),
+                            'accn': fact.get('accn')
+                        })
+        
+        # Now organize the data by concept groups
+        for group, concepts in concept_groups.items():
+            if group not in financial_data:
+                financial_data[group] = {}
+                
+            for concept in concepts:
+                if concept in concept_values:
+                    taxonomy = 'us-gaap' if concept in facts_data['facts'].get('us-gaap', {}) else 'ifrs-full'
+                    tag = f"{taxonomy}:{concept}"
+                    financial_data[group][tag] = concept_values[concept]
         
         # Normalize the data
-        normalized_data = self._normalize_api_data(financial_data, period_type, all_periods, num_periods, found_concepts, facts_data)
-        logger.info(f"Retrieved data for {len(normalized_data['periods'])} periods: {normalized_data['periods']}")
-        return normalized_data
+        normalized_data = self._normalize_api_data(
+            financial_data, 
+            period_type, 
+            all_periods, 
+            num_periods, 
+            found_concepts, 
+            facts_data
+        )
+        
+        if normalized_data and normalized_data.get('periods'):
+            logger.info(f"Retrieved data for {len(normalized_data['periods'])} periods: {normalized_data['periods']}")
+            return normalized_data
+        else:
+            logger.warning("No periods found in normalized data")
+            return {}
     
     def _normalize_api_data(self, financial_data, period_type, all_periods, num_periods, found_concepts, facts_data=None):
         """
@@ -182,8 +237,15 @@ class XBRLParser:
         category_order = {
             'Assets': 0,
             'Liabilities': 1,
-            'Equity': 2
+            'Equity': 2,
+            'Revenue': 3,
+            'Income': 4,
+            'EPS': 5,
+            'OperatingCashFlow': 6,
+            'InvestingCashFlow': 7,
+            'FinancingCashFlow': 8
         }
+        
         # Collect all unique periods
         periods = set()
         
@@ -197,14 +259,39 @@ class XBRLParser:
         fiscal_month = self._detect_fiscal_year_end(all_periods)
         logger.info(f"Detected fiscal year end month: {fiscal_month}")
         
-        # Filter periods by the fiscal year end month
-        fiscal_periods = [p for p in periods if p.split('-')[1] == fiscal_month]
+        # Filter periods based on period_type
+        filtered_periods = []
+        for period in periods:
+            try:
+                end_date = datetime.fromisoformat(period.replace('Z', '+00:00'))
+                
+                # For annual reports, check if it's a fiscal year end
+                if period_type == 'annual' and period.split('-')[1] == fiscal_month:
+                    filtered_periods.append(period)
+                # For quarterly reports, include all quarters
+                elif period_type == 'quarterly':
+                    filtered_periods.append(period)
+                # For YTD reports, include all periods
+                elif period_type == 'ytd':
+                    filtered_periods.append(period)
+            except (ValueError, IndexError):
+                continue
+        
+        # If we didn't find any periods matching the fiscal year end,
+        # use all periods as a fallback
+        if not filtered_periods:
+            filtered_periods = list(periods)
+            logger.warning(f"No periods matched fiscal year end month {fiscal_month}, using all periods")
         
         # Sort periods in descending order (most recent first)
-        sorted_periods = sorted(fiscal_periods if fiscal_periods else periods, reverse=True)
+        sorted_periods = sorted(filtered_periods, reverse=True)
         
         # Limit to the number of periods requested
         limited_periods = sorted_periods[:num_periods]
+        
+        if not limited_periods:
+            logger.warning("No periods available after filtering")
+            return None
         
         # Create normalized data structure
         normalized_data = {
@@ -259,30 +346,6 @@ class XBRLParser:
                                             break
                                 if value is not None:
                                     break
-                        
-                        # If still not found, look directly in the entity's financial data
-                        if value is None and facts_data:
-                            for taxonomy in ['us-gaap', 'ifrs-full']:
-                                if taxonomy not in facts_data.get('facts', {}):
-                                    continue
-                                    
-                                if value is not None:
-                                    break
-                                    
-                                for tag_name in ['CommonStock', 'CapitalStock', 'IssuedCapital']:
-                                    if tag_name in facts_data['facts'][taxonomy]:
-                                        for unit_type, facts in facts_data['facts'][taxonomy][tag_name].get('units', {}).items():
-                                            if unit_type == 'USD':
-                                                for fact in facts:
-                                                    if fact.get('end') == period:
-                                                        value = fact.get('val')
-                                                        break
-                                                if value is not None:
-                                                    break
-                        
-                        # If still not found, use 'N/A'
-                        if value is None:
-                            value = "N/A"  # Use N/A instead of blank for display purposes
                     
                     # For accounts payable, if total is missing, try to calculate it
                     if concept_name == "AccountsPayable" and value is None and "AccountsPayableCurrent" in found_concepts:
@@ -324,6 +387,7 @@ class XBRLParser:
             'AssetsCurrent': 'Current Assets',
             'AssetsNoncurrent': 'Non-Current Assets',
             'CashAndCashEquivalentsAtCarryingValue': 'Cash and Cash Equivalents',
+            'CashAndCashEquivalents': 'Cash and Cash Equivalents',
             'Liabilities': 'Total Liabilities',
             'LiabilitiesCurrent': 'Current Liabilities',
             'LiabilitiesNoncurrent': 'Non-Current Liabilities',
@@ -334,15 +398,19 @@ class XBRLParser:
             'StockholdersEquity': 'Stockholders\' Equity',
             'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest': 'Total Equity',
             'RetainedEarningsAccumulatedDeficit': 'Retained Earnings',
+            'RetainedEarnings': 'Retained Earnings',
             'CommonStockValue': 'Common Stock',
             'CommonStocksIncludingAdditionalPaidInCapital': 'Common Stock',
             'CommonStockParOrStatedValuePerShare': 'Common Stock',
             'StockholdersEquityAttributableToParent': 'Common Stock',
             'Revenues': 'Total Revenue',
+            'TotalRevenue': 'Total Revenue',
             'RevenueFromContractWithCustomer': 'Revenue from Contracts',
             'RevenueFromContractWithCustomerExcludingAssessedTax': 'Revenue (Excluding Taxes)',
             'SalesRevenueNet': 'Net Sales Revenue',
+            'NetSales': 'Net Sales',
             'NetIncomeLoss': 'Net Income',
+            'NetIncome': 'Net Income',
             'ProfitLoss': 'Profit/Loss',
             'NetIncomeLossAvailableToCommonStockholdersBasic': 'Net Income to Common Stockholders',
             'OperatingIncomeLoss': 'Operating Income',
@@ -350,8 +418,17 @@ class XBRLParser:
             'EarningsPerShareBasic': 'EPS (Basic)',
             'EarningsPerShareDiluted': 'EPS (Diluted)',
             'NetCashProvidedByUsedInOperatingActivities': 'Net Cash from Operations',
+            'OperatingCashFlow': 'Net Cash from Operations',
             'NetCashProvidedByUsedInInvestingActivities': 'Net Cash from Investing',
-            'NetCashProvidedByUsedInFinancingActivities': 'Net Cash from Financing'
+            'InvestingCashFlow': 'Net Cash from Investing',
+            'NetCashProvidedByUsedInFinancingActivities': 'Net Cash from Financing',
+            'FinancingCashFlow': 'Net Cash from Financing',
+            'CostOfRevenue': 'Cost of Revenue',
+            'CostOfGoodsAndServicesSold': 'Cost of Goods Sold',
+            'ResearchAndDevelopmentExpense': 'R&D Expenses',
+            'SellingGeneralAndAdministrativeExpense': 'SG&A Expenses',
+            'InterestExpense': 'Interest Expense',
+            'IncomeTaxExpenseBenefit': 'Income Tax Expense'
         }
         
         if concept_name in concept_labels:
@@ -380,13 +457,20 @@ class XBRLParser:
         if category == 'Assets':
             order_map = {
                 'Assets': 0,  # Total Assets comes first
+                'TotalAssets': 0,  # Alternative name
                 'AssetsCurrent': 10,  # Current Assets second
+                'CurrentAssets': 10,  # Alternative name
                 'CashAndCashEquivalentsAtCarryingValue': 20,  # Cash and equivalents
+                'CashAndCashEquivalents': 20,  # Alternative name
                 'ShortTermInvestments': 30,  # Short-term investments
+                'InvestmentsShortTerm': 30,  # Alternative name
                 'AccountsReceivableNet': 40,  # Accounts receivable
+                'AccountsReceivable': 40,  # Alternative name
                 'Inventory': 50,  # Inventory
+                'InventoryNet': 50,  # Alternative name
                 'PrepaidExpenseAndOtherAssetsCurrent': 60,  # Prepaid expenses
                 'AssetsNoncurrent': 100,  # Non-current assets last
+                'NoncurrentAssets': 100,  # Alternative name
                 'PropertyPlantAndEquipmentNet': 110,  # PP&E
                 'Goodwill': 120,  # Goodwill
                 'IntangibleAssetsNet': 130  # Intangible assets
@@ -397,13 +481,19 @@ class XBRLParser:
         elif category == 'Liabilities':
             order_map = {
                 'Liabilities': 0,  # Total Liabilities comes first
+                'TotalLiabilities': 0,  # Alternative name
                 'LiabilitiesCurrent': 10,  # Current Liabilities
+                'CurrentLiabilities': 10,  # Alternative name
                 'AccountsPayableCurrent': 20,  # Accounts payable 
                 'AccountsPayable': 25,  # Make sure this comes after AccountsPayableCurrent
                 'AccruedLiabilitiesCurrent': 30,  # Accrued liabilities
+                'AccruedLiabilities': 30,  # Alternative name
                 'DeferredRevenueCurrent': 40,  # Deferred revenue
+                'DeferredRevenue': 45,  # Deferred revenue (general)
                 'LiabilitiesNoncurrent': 100,  # Non-current liabilities
+                'NoncurrentLiabilities': 100,  # Alternative name
                 'LongTermDebt': 110,  # Long-term debt
+                'DebtLongTerm': 110,  # Alternative name
                 'LongTermDebtNoncurrent': 120,  # Non-current portion of long-term debt
                 'DeferredRevenueNoncurrent': 130,  # Deferred revenue, non-current
                 'DeferredTaxLiabilitiesNoncurrent': 140  # Deferred tax liabilities
@@ -414,14 +504,18 @@ class XBRLParser:
         elif category == 'Equity':
             order_map = {
                 'StockholdersEquity': 0,  # Total Equity comes first
+                'TotalEquity': 0,  # Alternative name
                 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest': 5,  # Total equity including non-controlling interest
+                'EquityAttributableToParent': 8,  # Equity attributable to parent
                 'CommonStockValue': 10,  # Common stock
                 'CommonStocksIncludingAdditionalPaidInCapital': 10,  # Same priority as CommonStockValue
                 'CommonStockParOrStatedValuePerShare': 10,  # Same priority as CommonStockValue
                 'StockholdersEquityAttributableToParent': 10,  # Same priority as CommonStockValue
                 'AdditionalPaidInCapital': 15,  # Additional paid-in capital
                 'TreasuryStockValue': 18,  # Treasury stock
+                'TreasuryStock': 18,  # Alternative name
                 'RetainedEarningsAccumulatedDeficit': 20,  # Retained earnings/accumulated deficit
+                'RetainedEarnings': 20,  # Alternative name
                 'AccumulatedOtherComprehensiveIncomeLossNetOfTax': 30  # AOCI
             }
             return order_map.get(concept_name, 50)  # Default order
@@ -430,10 +524,20 @@ class XBRLParser:
         elif category == 'Revenue' or category == 'Income':
             order_map = {
                 'Revenues': 0,
+                'TotalRevenue': 0,
                 'SalesRevenueNet': 10,
+                'NetSales': 10,
+                'RevenueFromContractWithCustomer': 15,
                 'GrossProfit': 20, 
-                'OperatingIncomeLoss': 30,
-                'NetIncomeLoss': 40
+                'CostOfRevenue': 25,
+                'CostOfGoodsAndServicesSold': 30,
+                'SellingGeneralAndAdministrativeExpense': 35,
+                'ResearchAndDevelopmentExpense': 40,
+                'OperatingIncomeLoss': 45,
+                'InterestExpense': 50,
+                'IncomeTaxExpenseBenefit': 55,
+                'NetIncomeLoss': 60,
+                'NetIncome': 60
             }
             return order_map.get(concept_name, 50)  # Default order
             
@@ -459,7 +563,14 @@ class XBRLParser:
             str: Two-digit month representing fiscal year end
         """
         # Extract months from period end dates
-        months = [period.split('-')[1] for period in all_periods if '-' in period]
+        months = []
+        for period in all_periods:
+            try:
+                month = period.split('-')[1]
+                if month.isdigit() and 1 <= int(month) <= 12:
+                    months.append(month)
+            except (IndexError, ValueError):
+                continue
         
         # Count occurrences of each month
         month_counter = Counter(months)
@@ -485,12 +596,12 @@ class XBRLParser:
         """
         # Extract all periods for fiscal year detection
         all_periods = []
-        found_concepts = set()  # Add this line to track found concepts
+        found_concepts = set()
         
         for category in financial_data:
             for tag in financial_data[category]:
                 concept_name = tag.split(':')[-1]
-                found_concepts.add(concept_name)  # Add this line to track found concepts
+                found_concepts.add(concept_name)
                 for fact in financial_data[category][tag]:
                     if 'end' in fact:
                         all_periods.append(fact['end'])

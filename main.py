@@ -236,55 +236,163 @@ def extract_financial_statements(params):
         
         print(f"Found {len(filings)} {filing_type} filings.")
         
-        # Choose approach based on statement type and period
-        if params["statement_type"] in ["BS", "IS", "CF"]:
-            # Use statement extractor for individual statements
-            financial_data = {}
+        # First try to use the XBRL API which is more reliable
+        print("Retrieving XBRL data for financial statements...")
+        facts_data = filing_retrieval.get_company_facts(params["cik"])
+        
+        if facts_data:
+            financial_data = xbrl_parser.parse_company_facts(
+                facts_data,
+                params["statement_type"],
+                params["period_type"],
+                params["num_periods"]
+            )
             
-            for filing in filings[:params["num_periods"]]:
-                print(f"Processing filing from {filing['filing_date']}...")
+            if financial_data and financial_data.get('metrics'):
+                print(f"Successfully retrieved {len(financial_data.get('metrics', {}))} metrics from XBRL data.")
+                return financial_data
+            else:
+                print("XBRL data extraction returned no metrics, falling back to statement extraction...")
+        else:
+            print("Failed to retrieve XBRL data, falling back to statement extraction...")
+        
+        # Fall back to statement extractor if XBRL fails
+        financial_data = {}
+        
+        # Process each filing to extract statements
+        for filing in filings[:params["num_periods"]]:
+            print(f"Processing filing from {filing['filing_date']}...")
+            if params["statement_type"] == "ALL":
+                # Process all statement types if ALL is selected
+                for statement_type in ["BS", "IS", "CF"]:
+                    filing_data = statement_extractor.extract_statement(
+                        params["ticker"], 
+                        filing["accession_number"], 
+                        statement_type
+                    )
+                    if filing_data is not None and not filing_data.empty:
+                        if statement_type not in financial_data:
+                            financial_data[statement_type] = {}
+                        financial_data[statement_type][filing["filing_date"]] = filing_data
+                        print(f"Successfully extracted {statement_type} from filing dated {filing['filing_date']}")
+            else:
+                # Process only the selected statement type
                 filing_data = statement_extractor.extract_statement(
                     params["ticker"], 
                     filing["accession_number"], 
                     params["statement_type"]
                 )
-                if filing_data is not None:
+                if filing_data is not None and not filing_data.empty:
                     financial_data[filing["filing_date"]] = filing_data
-            
-            if not financial_data:
-                # Fall back to XBRL data
-                print("Falling back to XBRL data extraction...")
-                facts_data = filing_retrieval.get_company_facts(params["cik"])
-                if facts_data:
-                    financial_data = xbrl_parser.parse_company_facts(
-                        facts_data,
-                        params["statement_type"],
-                        params["period_type"],
-                        params["num_periods"]
-                    )
-        else:
-            # Use XBRL parser for comprehensive data
-            facts_data = filing_retrieval.get_company_facts(params["cik"])
-            if facts_data:
-                financial_data = xbrl_parser.parse_company_facts(
-                    facts_data,
-                    params["statement_type"],
-                    params["period_type"],
-                    params["num_periods"]
-                )
-            else:
-                print("Failed to retrieve XBRL data for the company.")
-                return None
+                    print(f"Successfully extracted {params['statement_type']} from filing dated {filing['filing_date']}")
         
-        return financial_data
-    
+        if financial_data:
+            # If we successfully extracted data using the statement extractor,
+            # convert it to the format expected by the data formatter
+            return format_statement_data(financial_data, params["statement_type"])
+        
+        print("Failed to extract financial statements from both XBRL data and filing documents.")
+        return None
+        
     except Exception as e:
         logger.error(f"Error extracting financial statements: {e}", exc_info=True)
         print(f"Error: {str(e)}")
         return None
 
 
-# Update the main.py file to properly display console output
+def format_statement_data(extracted_data, statement_type):
+    """
+    Format the extracted statement data into the structure expected by the DataFormatter
+    
+    Args:
+        extracted_data (dict): Data extracted from filings
+        statement_type (str): Type of financial statement
+        
+    Returns:
+        dict: Formatted financial data
+    """
+    if not extracted_data:
+        return None
+        
+    # If statement_type is not "ALL", we have a simpler structure
+    if statement_type != "ALL":
+        periods = list(extracted_data.keys())
+        metrics = {}
+        
+        # Create a combined set of all column names
+        all_columns = set()
+        for period, df in extracted_data.items():
+            all_columns.update(df.columns)
+        
+        # For each metric (column), collect values across periods
+        for column in all_columns:
+            metric_key = f"{statement_type}_{column}"
+            values = {}
+            for period, df in extracted_data.items():
+                if column in df.columns:
+                    values[period] = df[column].iloc[0] if len(df) > 0 else None
+                else:
+                    values[period] = None
+                    
+            metrics[metric_key] = {
+                "values": values,
+                "category": statement_type,
+                "tag": column,
+                "display_name": column,
+                "order": 50  # Default order
+            }
+            
+        return {
+            "periods": periods,
+            "metrics": metrics,
+            "metadata": {
+                "period_type": "annual" if statement_type == "annual" else "quarterly"
+            }
+        }
+    
+    # For "ALL", we have a nested structure
+    else:
+        # Collect all periods across all statement types
+        all_periods = set()
+        for statement_type, periods_data in extracted_data.items():
+            all_periods.update(periods_data.keys())
+            
+        periods = sorted(list(all_periods))
+        metrics = {}
+        
+        # Process each statement type
+        for statement_type, periods_data in extracted_data.items():
+            # Create a combined set of all column names for this statement type
+            statement_columns = set()
+            for period, df in periods_data.items():
+                statement_columns.update(df.columns)
+                
+            # For each metric (column), collect values across periods
+            for column in statement_columns:
+                metric_key = f"{statement_type}_{column}"
+                values = {}
+                for period in periods:
+                    if period in periods_data and column in periods_data[period].columns:
+                        values[period] = periods_data[period][column].iloc[0] if len(periods_data[period]) > 0 else None
+                    else:
+                        values[period] = None
+                        
+                metrics[metric_key] = {
+                    "values": values,
+                    "category": statement_type,
+                    "tag": column,
+                    "display_name": column,
+                    "order": 50  # Default order
+                }
+                
+        return {
+            "periods": periods,
+            "metrics": metrics,
+            "metadata": {
+                "period_type": "annual"  # Default to annual for combined statements
+            }
+        }
+
 
 def main():
     """Main entry point for the EDGAR Financial Tool."""
