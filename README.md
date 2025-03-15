@@ -4,7 +4,7 @@ A Python-based tool for retrieving, analyzing, and exporting financial statement
 
 ## Overview
 
-The EDGAR Financial Tool allows users to access and analyze financial data from public companies by interacting directly with the U.S. Securities and Exchange Commission's Electronic Data Gathering, Analysis, and Retrieval (EDGAR) system and its APIs. This tool simplifies the process of retrieving, parsing, and presenting financial statement data from SEC filings in XBRL format.
+The EDGAR Financial Tool provides access to financial data from public companies by interacting directly with the U.S. Securities and Exchange Commission's Electronic Data Gathering, Analysis, and Retrieval (EDGAR) system and its APIs. This tool simplifies the process of retrieving, parsing, and presenting financial statement data from SEC filings in XBRL format.
 
 ## Features
 
@@ -189,7 +189,8 @@ edgar_financial_tool/
 │   ├── company_lookup.py       # CIK and company lookup functionality
 │   ├── filing_retrieval.py     # Access SEC APIs and retrieve data
 │   ├── xbrl_parser.py          # Process and normalize API data
-│   └── data_formatter.py       # Format financial data for output
+│   ├── data_formatter.py       # Format financial data for output
+│   └── statement_extractor.py  # Extract statements from HTML/XML filings
 │
 ├── config/
 │   ├── __init__.py
