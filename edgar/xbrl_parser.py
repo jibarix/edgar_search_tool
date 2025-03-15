@@ -59,16 +59,24 @@ class XBRLParser:
         if statement_type == 'BS' or statement_type == 'ALL':
             concept_groups['Assets'] = [
                 'Assets', 'AssetsCurrent', 'AssetsNoncurrent',
-                'CashAndCashEquivalentsAtCarryingValue'
+                'CashAndCashEquivalentsAtCarryingValue', 'ShortTermInvestments',
+                'AccountsReceivableNet', 'InventoryNet', 'Inventory',
+                'PrepaidExpenseAndOtherAssetsCurrent', 'PropertyPlantAndEquipmentNet',
+                'Goodwill', 'IntangibleAssetsNet', 'MarketableSecuritiesCurrent',
+                'MarketableSecuritiesNoncurrent', 'OtherAssetsCurrent', 'OtherAssetsNoncurrent'
             ]
             concept_groups['Liabilities'] = [
                 'Liabilities', 'LiabilitiesCurrent', 'LiabilitiesNoncurrent',
-                'AccountsPayable', 'AccountsPayableCurrent', 
-                'LongTermDebt', 'LongTermDebtNoncurrent'
+                'AccountsPayable', 'AccountsPayableCurrent', 'AccruedLiabilitiesCurrent',
+                'DeferredRevenueCurrent', 'DeferredRevenueNoncurrent',
+                'LongTermDebt', 'LongTermDebtNoncurrent', 'DeferredTaxLiabilitiesNoncurrent',
+                'CommercialPaper', 'ShortTermBorrowings', 'AccruedIncomeTaxesCurrent',
+                'OtherLiabilitiesCurrent', 'OtherLiabilitiesNoncurrent'
             ]
             concept_groups['Equity'] = [
                 'StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest',
-                'RetainedEarningsAccumulatedDeficit', 'CommonStockValue'
+                'RetainedEarningsAccumulatedDeficit', 'CommonStockValue', 'AdditionalPaidInCapital',
+                'TreasuryStockValue', 'AccumulatedOtherComprehensiveIncomeLossNetOfTax'
             ]
         
         if statement_type == 'IS' or statement_type == 'ALL':
@@ -97,7 +105,7 @@ class XBRLParser:
         
         # Extract financial data
         financial_data = {}
-        found_concepts = set()
+        found_concepts = set()  # Track found concepts for later reference
         all_periods = []
         
         for taxonomy in taxonomies:
@@ -148,11 +156,11 @@ class XBRLParser:
                                     found_concepts.add(concept)
         
         # Normalize the data
-        normalized_data = self._normalize_api_data(financial_data, period_type, all_periods, num_periods)
+        normalized_data = self._normalize_api_data(financial_data, period_type, all_periods, num_periods, found_concepts)
         logger.info(f"Retrieved data for {len(normalized_data['periods'])} periods: {normalized_data['periods']}")
         return normalized_data
     
-    def _normalize_api_data(self, financial_data, period_type, all_periods, num_periods):
+    def _normalize_api_data(self, financial_data, period_type, all_periods, num_periods, found_concepts):
         """
         Normalize financial data from SEC API into a structured format.
         
@@ -161,10 +169,17 @@ class XBRLParser:
             period_type (str): 'annual' or 'quarterly' or 'ytd'
             all_periods (list): All period end dates found in the data
             num_periods (int): Number of periods to return
+            found_concepts (set): Set of concepts found in the data
             
         Returns:
             dict: Normalized financial data by period
         """
+        # Define the proper order of categories for balance sheet presentation
+        category_order = {
+            'Assets': 0,
+            'Liabilities': 1,
+            'Equity': 2
+        }
         # Collect all unique periods
         periods = set()
         
@@ -193,8 +208,8 @@ class XBRLParser:
             'metrics': {}
         }
         
-        # Fill in data for each period
-        for category in financial_data:
+        # Fill in data for each period - use sorted categories
+        for category in sorted(financial_data.keys(), key=lambda x: category_order.get(x, 99)):
             for tag in financial_data[category]:
                 # Create a human-readable label from the tag
                 concept_name = tag.split(':')[-1]
@@ -313,25 +328,37 @@ class XBRLParser:
         Returns:
             int: The ordering value
         """
-        # Standard ordering for Assets section
+        # Standard ordering for Assets section - from most liquid to least liquid
         if category == 'Assets':
             order_map = {
                 'Assets': 0,  # Total Assets comes first
-                'AssetsCurrent': 10,
-                'CashAndCashEquivalentsAtCarryingValue': 20,
-                'AssetsNoncurrent': 100,
+                'AssetsCurrent': 10,  # Current Assets second
+                'CashAndCashEquivalentsAtCarryingValue': 20,  # Cash and equivalents
+                'ShortTermInvestments': 30,  # Short-term investments
+                'AccountsReceivableNet': 40,  # Accounts receivable
+                'Inventory': 50,  # Inventory
+                'PrepaidExpenseAndOtherAssetsCurrent': 60,  # Prepaid expenses
+                'AssetsNoncurrent': 100,  # Non-current assets last
+                'PropertyPlantAndEquipmentNet': 110,  # PP&E
+                'Goodwill': 120,  # Goodwill
+                'IntangibleAssetsNet': 130  # Intangible assets
             }
             return order_map.get(concept_name, 50)  # Default order
             
-        # Standard ordering for Liabilities section
+        # Standard ordering for Liabilities section - current before non-current
         elif category == 'Liabilities':
             order_map = {
                 'Liabilities': 0,  # Total Liabilities comes first
-                'LiabilitiesCurrent': 10,
-                'AccountsPayableCurrent': 20,
+                'LiabilitiesCurrent': 10,  # Current Liabilities
+                'AccountsPayableCurrent': 20,  # Accounts payable 
                 'AccountsPayable': 25,  # Make sure this comes after AccountsPayableCurrent
-                'LiabilitiesNoncurrent': 100,
-                'LongTermDebt': 110
+                'AccruedLiabilitiesCurrent': 30,  # Accrued liabilities
+                'DeferredRevenueCurrent': 40,  # Deferred revenue
+                'LiabilitiesNoncurrent': 100,  # Non-current liabilities
+                'LongTermDebt': 110,  # Long-term debt
+                'LongTermDebtNoncurrent': 120,  # Non-current portion of long-term debt
+                'DeferredRevenueNoncurrent': 130,  # Deferred revenue, non-current
+                'DeferredTaxLiabilitiesNoncurrent': 140  # Deferred tax liabilities
             }
             return order_map.get(concept_name, 50)  # Default order
             
@@ -339,8 +366,12 @@ class XBRLParser:
         elif category == 'Equity':
             order_map = {
                 'StockholdersEquity': 0,  # Total Equity comes first
-                'CommonStockValue': 10,
-                'RetainedEarningsAccumulatedDeficit': 20
+                'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest': 5,  # Total equity including non-controlling interest
+                'CommonStockValue': 10,  # Common stock
+                'AdditionalPaidInCapital': 15,  # Additional paid-in capital
+                'TreasuryStockValue': 18,  # Treasury stock
+                'RetainedEarningsAccumulatedDeficit': 20,  # Retained earnings/accumulated deficit
+                'AccumulatedOtherComprehensiveIncomeLossNetOfTax': 30  # AOCI
             }
             return order_map.get(concept_name, 50)  # Default order
             
@@ -403,10 +434,14 @@ class XBRLParser:
         """
         # Extract all periods for fiscal year detection
         all_periods = []
+        found_concepts = set()  # Add this line to track found concepts
+        
         for category in financial_data:
             for tag in financial_data[category]:
+                concept_name = tag.split(':')[-1]
+                found_concepts.add(concept_name)  # Add this line to track found concepts
                 for fact in financial_data[category][tag]:
                     if 'end' in fact:
                         all_periods.append(fact['end'])
         
-        return self._normalize_api_data(financial_data, period_type, all_periods, num_periods)
+        return self._normalize_api_data(financial_data, period_type, all_periods, num_periods, found_concepts)
