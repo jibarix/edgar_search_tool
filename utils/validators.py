@@ -189,7 +189,6 @@ def is_valid_url(url):
         r'([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])'  # last domain segment
         r'(:\d+)?'  # optional port
         r'(\/[-a-zA-Z0-9@:%._\+~#=&?]*)*'  # path
-        r'
     )
     
     return bool(url_pattern.match(url))
@@ -209,6 +208,6 @@ def is_valid_ticker(ticker):
         return False
     
     # Ticker symbols are typically 1-5 uppercase letters
-    ticker_pattern = re.compile(r'^[A-Z]{1,5})
+    ticker_pattern = re.compile(r'^[A-Z]{1,5}$')
     
     return bool(ticker_pattern.match(ticker.upper()))
