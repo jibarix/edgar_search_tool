@@ -1,0 +1,49 @@
+Developer Resources
+Welcome to the SEC's developer page.
+
+Data APIs Now Available
+
+Submissions by company and extracted XBRL data are available via RESTful APIs on data.sec.gov, offering JSON formatted data.
+
+Request features and share your ideas with opendata@sec.gov. Please note we cannot provide technical support for developing or debugging scripted downloading processes.
+
+Accessing EDGAR Data
+
+The U.S. Securities and Exchange Commission's HTTPS file system allows comprehensive access to the SEC's EDGAR (Electronic Data Gathering, Analysis, and Retrieval system) filings by corporations, funds, and individuals.  For full documentation, please see Accessing EDGAR Data.
+
+RSS Feeds
+
+Some EDGAR search results can be captured as RSS Feeds. The RSS link on various EDGAR searches is located on the left, immediately above the filings result list.
+
+Company Search. Using the Company Search to find the company of interest, you can subscribe to this search to receive the most recent filings from this company. You can further filter your results by Filing Type.
+
+Latest Filings. Using the Latest Filings Search, you can subscribe to all filings, or filter by company, CIK, or Form Type. You can also choose to include, exclude, or select only Ownership filings (Forms 3, 4, 5). For example, here are the most recent Form 10-Ks (Annual Reports).
+
+For more information on RSS feeds, including Mutual Fund Search and Historical Archives (Boolean) search, please see RSS Feeds.
+
+Index Files
+
+Daily and quarterly EDGAR index files are available in html, xml and json. Four types of indexes are available. The company, form, and master indexes contain the same information sorted differently.
+
+Please see Accessing EDGAR Data for documentation.
+
+/edgar/daily-index — daily index files through the current year
+/edgar/full-index — Full indexes offer a "bridge" between quarterly and daily indexes, compiling filings from the beginning of the current quarter through the previous business day. At the end of the quarter, the full index is rolled into a static quarterly index.
+Daily Archives
+
+Please see Accessing EDGAR Data for documentation.
+
+/edgar/Feed/ — tar and gzip archive files (e.g., 20061207.nc.tar.gz) for each filing day.
+/edgar/Oldloads/ — daily concatenated archive files of all public filing submissions complete with the filing header.
+Fair Access
+
+To ensure that everyone has equitable access to SEC EDGAR content, please use efficient scripting, downloading only what you need and please moderate requests to minimize server load. Current guidelines limit each user to a total of no more than 10 requests per second, regardless of the number of machines used to submit requests.
+
+To ensure that SEC.gov remains available to all users, we reserve the right to block IP addresses that submit excessive requests. The SEC does not allow "unclassified" bots or automated tools to crawl the site. Any request that has been identified as part of an unclassified bot or an automated tool outside of the acceptable policy will be managed to ensure fair access for all users. See the Developer FAQ on how to comply with SEC's Web Site Privacy and Security Policy.
+
+Other Developer Resources
+
+SEC Open Source Policy
+Open Source Policy Implementation
+Data.gov provides data, tools, and resources to conduct research, develop web and mobile applications, design data visualizations, and more.
+Last Reviewed or Updated: March 10, 2025
