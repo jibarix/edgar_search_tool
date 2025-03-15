@@ -16,16 +16,18 @@ class Cache:
     A simple file-based cache implementation.
     """
     
-    def __init__(self, namespace="default"):
+    def __init__(self, namespace="default", expiry=CACHE_EXPIRY):
         """
         Initialize a cache instance.
         
         Args:
             namespace (str): Namespace for this cache to avoid key conflicts
+            expiry (int): Default cache expiry time in seconds
         """
         self.namespace = namespace
         self.cache_dir = os.path.join(CACHE_DIR, namespace)
         self.enabled = CACHE_ENABLED
+        self.default_expiry = expiry
         
         # Create cache directory if it doesn't exist
         if not os.path.exists(self.cache_dir):
@@ -45,7 +47,7 @@ class Cache:
         safe_key = "".join(c if c.isalnum() else "_" for c in str(key))
         return os.path.join(self.cache_dir, f"{safe_key}.cache")
     
-    def set(self, key, value, ttl=CACHE_EXPIRY):
+    def set(self, key, value, ttl=None):
         """
         Store a value in the cache.
         
@@ -57,6 +59,9 @@ class Cache:
         if not self.enabled:
             return
         
+        if ttl is None:
+            ttl = self.default_expiry
+            
         cache_path = self._get_cache_path(key)
         
         # Create cache entry with expiration time

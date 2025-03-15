@@ -1,3 +1,7 @@
+"""
+Module for retrieving SEC EDGAR filings and data through SEC APIs.
+"""
+
 import os
 import json
 import logging
@@ -5,7 +9,6 @@ import time
 import threading
 import requests
 from datetime import datetime
-from lxml import etree
 from jsonschema import validate, ValidationError
 
 from config.constants import (
@@ -22,11 +25,10 @@ from utils.validators import is_valid_cik, is_valid_filing_type
 # Initialize logger
 logger = logging.getLogger(__name__)
 
-# Initialize cache for filing data with an expiry (e.g., 1 hour)
+# Initialize cache for filing data
 filing_cache = Cache("filing_data", expiry=3600)
 
-# Optional: Define a basic JSON schema for validating EDGAR submissions.
-# (This is a simplified example; you might want to expand it based on actual response structure.)
+# Define a basic JSON schema for validating EDGAR submissions.
 EDGAR_SUBMISSIONS_SCHEMA = {
     "type": "object",
     "properties": {
@@ -45,7 +47,7 @@ EDGAR_SUBMISSIONS_SCHEMA = {
 
 class FilingRetrieval:
     """
-    Class for retrieving SEC EDGAR filings.
+    Class for retrieving SEC EDGAR filings and data.
     """
     
     def __init__(self):
@@ -264,26 +266,28 @@ class FilingRetrieval:
                 break
         
         return processed_filings
-    
-    def download_filing(self, url, output_dir=None):
+
+    def get_company_facts(self, cik):
         """
-        Download a filing document from SEC.
+        Get all XBRL facts for a company using the SEC's Company Facts API.
         
         Args:
-            url (str): URL of the filing document
-            output_dir (str): Directory to save the file
+            cik (str): The company CIK
             
         Returns:
-            tuple: (file_path, file_content) if successful, (None, None) otherwise
+            dict: Company facts data or None on error
         """
-        if not url:
-            logger.error("Invalid URL")
-            return None, None
+        if not is_valid_cik(cik):
+            logger.error(ERROR_MESSAGES["INVALID_CIK"])
+            return None
+            
+        formatted_cik = str(cik).zfill(10)
+        cache_key = f"company_facts_{formatted_cik}"
+        cached_data = filing_cache.get(cache_key)
+        if cached_data:
+            return cached_data
         
-        cache_key = f"filing_content_{url}"
-        cached_content = filing_cache.get(cache_key)
-        if cached_content:
-            return cached_content.get("path"), cached_content.get("content")
+        url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{formatted_cik}.json"
         
         try:
             self._respect_rate_limit()
@@ -296,89 +300,63 @@ class FilingRetrieval:
                 retry_delay=API_RETRY_DELAY
             )
             response.raise_for_status()
-            file_content = response.text
-            file_name = url.split('/')[-1]
+            facts_data = response.json()
             
-            if not output_dir:
-                output_dir = os.path.join(DEFAULT_OUTPUT_DIR, "filings")
-            os.makedirs(output_dir, exist_ok=True)
-            file_path = os.path.join(output_dir, file_name)
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(file_content)
+            # Cache the data
+            filing_cache.set(cache_key, facts_data)
             
-            filing_cache.set(cache_key, {
-                "path": file_path,
-                "content": file_content
-            })
-            
-            return file_path, file_content
+            return facts_data
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading filing: {e}")
-            return None, None
-    
-    def get_filing_by_accession(self, cik, accession_number):
+            logger.error(f"Error fetching company facts: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing company facts JSON: {e}")
+            return None
+
+    def get_company_concept(self, cik, taxonomy, concept):
         """
-        Get a filing document by CIK and accession number.
+        Get all values for a specific concept from a company using the SEC's Company Concept API.
         
         Args:
             cik (str): The company CIK
-            accession_number (str): The filing accession number
+            taxonomy (str): The taxonomy (e.g., 'us-gaap', 'ifrs-full')
+            concept (str): The concept name (e.g., 'Assets', 'Liabilities')
             
         Returns:
-            tuple: (file_path, file_content) if successful, (None, None) otherwise
+            dict: Company concept data or None on error
         """
-        if not is_valid_cik(cik) or not accession_number:
-            logger.error("Invalid CIK or accession number")
-            return None, None
-        
-        formatted_cik = str(cik).zfill(10)
-        formatted_accession = accession_number.replace('-', '')
-        url = f"{SEC_BASE_URL}/Archives/edgar/data/{int(formatted_cik)}/{formatted_accession}/{accession_number}.txt"
-        return self.download_filing(url)
-    
-    def get_xbrl_filing(self, cik, accession_number):
-        """
-        Get XBRL instance document for a filing.
-        
-        Args:
-            cik (str): The company CIK
-            accession_number (str): The filing accession number
+        if not is_valid_cik(cik):
+            logger.error(ERROR_MESSAGES["INVALID_CIK"])
+            return None
             
-        Returns:
-            tuple: (file_path, file_content) if successful, (None, None) otherwise
-        """
-        if not is_valid_cik(cik) or not accession_number:
-            logger.error("Invalid CIK or accession number")
-            return None, None
-        
         formatted_cik = str(cik).zfill(10)
-        formatted_accession = accession_number.replace('-', '')
-        cache_key = f"xbrl_content_{formatted_cik}_{formatted_accession}"
-        cached_content = filing_cache.get(cache_key)
-        if cached_content:
-            return cached_content.get("path"), cached_content.get("content")
+        cache_key = f"company_concept_{formatted_cik}_{taxonomy}_{concept}"
+        cached_data = filing_cache.get(cache_key)
+        if cached_data:
+            return cached_data
         
-        _, filing_content = self.get_filing_by_accession(cik, accession_number)
-        if not filing_content:
-            return None, None
+        url = f"https://data.sec.gov/api/xbrl/companyconcept/CIK{formatted_cik}/{taxonomy}/{concept}.json"
         
-        # Use lxml to parse the filing content and extract the XBRL filename
         try:
-            parser = etree.XMLParser(recover=True)
-            root = etree.fromstring(filing_content.encode('utf-8'), parser=parser)
-            xbrl_filename = root.findtext('.//FILENAME')
-            if not xbrl_filename:
-                logger.warning(f"No XBRL instance document found in filing {accession_number}")
-                return None, None
+            self._respect_rate_limit()
+            response = retry_request(
+                requests.get,
+                url,
+                headers=HTTP_HEADERS,
+                timeout=API_REQUEST_TIMEOUT,
+                max_retries=API_RETRY_COUNT,
+                retry_delay=API_RETRY_DELAY
+            )
+            response.raise_for_status()
+            concept_data = response.json()
             
-            url = f"{SEC_BASE_URL}/Archives/edgar/data/{int(formatted_cik)}/{formatted_accession}/{xbrl_filename}"
-            file_path, file_content = self.download_filing(url)
-            if file_path and file_content:
-                filing_cache.set(cache_key, {
-                    "path": file_path,
-                    "content": file_content
-                })
-            return file_path, file_content
-        except etree.XMLSyntaxError as e:
-            logger.error(f"XML parsing error in XBRL extraction: {e}")
-            return None, None
+            # Cache the data
+            filing_cache.set(cache_key, concept_data)
+            
+            return concept_data
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching company concept: {e}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing company concept JSON: {e}")
+            return None

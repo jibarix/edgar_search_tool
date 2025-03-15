@@ -22,7 +22,6 @@ from edgar.filing_retrieval import FilingRetrieval
 from edgar.xbrl_parser import XBRLParser
 from edgar.data_formatter import DataFormatter
 
-from utils.helpers import get_filing_dates
 from utils.validators import (
     is_valid_company_name, is_valid_cik, 
     is_valid_statement_type, is_valid_reporting_period,
@@ -66,10 +65,6 @@ def setup_args():
     
     # Filing selection
     filing_group = parser.add_argument_group("Filing Selection")
-    filing_group.add_argument(
-        "--filing-type", type=str, default="10-K",
-        help="Filing type to retrieve (default: 10-K)"
-    )
     filing_group.add_argument(
         "--statement-type", "-s", type=str, default="ALL",
         choices=FINANCIAL_STATEMENT_TYPES.keys(),
@@ -232,93 +227,26 @@ def run(params):
         
         print(f"\nRetrieving {params['statement_type']} for {params['company_name']} ({params['cik']})...")
         
-        # Get date ranges for the requested periods
-        date_ranges = get_filing_dates(params["period_type"], params["num_periods"])
+        # Use the SEC API approach to get financial data
+        print("Fetching financial data from SEC API...")
         
-        all_financial_data = {}
-        filings_found = False
+        # Get all financial facts for the company
+        facts_data = filing_retrieval.get_company_facts(params["cik"])
         
-        # Try both 10-K/10-Q and alternate filing types to increase chances of finding data
-        filing_types = []
-        if params["period_type"].lower() == "annual":
-            filing_types = ["10-K", "20-F", "40-F"]  # Try annual reports for US, foreign, and Canadian companies
-        else:
-            filing_types = ["10-Q", "6-K"]  # Try quarterly reports for US and foreign companies
-        
-        # Process each period
-        for i, (start_date, end_date) in enumerate(date_ranges):
-            period_label = f"Period {i+1}: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
-            print(f"\nProcessing {period_label}...")
-            
-            # Try each filing type
-            for filing_type in filing_types:
-                # Get filings for the period
-                filings = filing_retrieval.get_filing_metadata(
-                    params["cik"],
-                    filing_type=filing_type,
-                    start_date=start_date,
-                    end_date=end_date,
-                    limit=3  # Get up to 3 filings per period to increase chances of finding XBRL data
-                )
-                
-                if not filings:
-                    continue
-                
-                filings_found = True
-                print(f"Found {len(filings)} {filing_type} filings")
-                
-                # Try each filing until we get valid XBRL data
-                for filing in filings:
-                    print(f"Processing filing: {filing['form']} filed on {filing['filing_date']}")
-                    
-                    # Get the XBRL data
-                    _, xbrl_content = filing_retrieval.get_xbrl_filing(params["cik"], filing["accession_number"])
-                    
-                    if not xbrl_content:
-                        print(f"No XBRL data found for filing {filing['accession_number']}")
-                        continue
-                    
-                    # Parse the XBRL data
-                    statement_data = xbrl_parser.extract_financial_statement(xbrl_content, params["statement_type"])
-                    
-                    if not statement_data:
-                        print(f"No {params['statement_type']} data found in filing {filing['accession_number']}")
-                        continue
-                    
-                    # Add to the combined data
-                    for category, category_data in statement_data.items():
-                        if category not in all_financial_data:
-                            all_financial_data[category] = {}
-                        
-                        for tag, tag_data in category_data.items():
-                            if tag not in all_financial_data[category]:
-                                all_financial_data[category][tag] = []
-                            
-                            all_financial_data[category][tag].extend(tag_data)
-                    
-                    # Break if we got data for this period
-                    if statement_data:
-                        break
-                
-                # Break if we found usable filings for this filing type
-                if filings:
-                    break
-        
-        if not filings_found:
-            print("\nNo filings found for the specified criteria.")
-            print("Try adjusting the date ranges or using different filing types.")
+        if not facts_data:
+            print("\nNo financial data found for the company. Please check the CIK number.")
             return False
         
-        if not all_financial_data:
-            print("\nNo financial data found in the retrieved filings.")
-            print("Try a different statement type or company.")
-            return False
-        
-        # Normalize the data
-        normalized_data = xbrl_parser.normalize_financial_data(all_financial_data, params["period_type"])
+        # Parse the facts data to extract the requested statement type
+        normalized_data = xbrl_parser.parse_company_facts(
+            facts_data, 
+            params["statement_type"],
+            params["period_type"]
+        )
         
         if not normalized_data or not normalized_data.get("periods") or not normalized_data.get("metrics"):
-            print("\nInsufficient financial data for normalization.")
+            print("\nInsufficient financial data for the requested statement type.")
+            print("Try a different statement type or company.")
             return False
         
         # Format and output the data
