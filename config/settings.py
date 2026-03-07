@@ -28,7 +28,7 @@ DEFAULT_QUARTERLY_PERIODS = 4
 
 # Output settings
 DEFAULT_OUTPUT_FORMAT = "csv"
-SUPPORTED_OUTPUT_FORMATS = ["csv", "json", "excel", "console"]
+SUPPORTED_OUTPUT_FORMATS = ["csv", "json", "excel", "html", "console"]
 DEFAULT_OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
 # User interface settings

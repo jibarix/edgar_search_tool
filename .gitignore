@@ -2,3 +2,8 @@ venv/
 cache/
 logs/
 output/
+__pycache__/
+*.pyc
+.claude/
+data/sec_datasets/*.zip
+data/sec_datasets/*/

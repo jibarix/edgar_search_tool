@@ -6,6 +6,7 @@ import os
 import csv
 import json
 import logging
+import webbrowser
 from datetime import datetime
 from tabulate import tabulate
 import pandas as pd
@@ -174,27 +175,42 @@ class DataFormatter:
         # Create DataFrame
         return pd.DataFrame(df_data)
     
-    def _format_dataframe(self, df):
+    def _format_dataframe(self, df, data=None):
         """
         Apply formatting to the DataFrame.
-        
+
         Args:
             df (pandas.DataFrame): DataFrame with financial data
-            
+            data (dict): Original normalized data with metric info
+
         Returns:
             pandas.DataFrame: Formatted DataFrame
         """
+        # Build a lookup from display_name -> unit for decimal formatting
+        unit_lookup = {}
+        if data and 'metrics' in data:
+            for metric_data in data['metrics'].values():
+                unit_lookup[metric_data.get('display_name', '')] = metric_data.get('unit', 'USD')
+
         # Create a copy to avoid modifying the original
         formatted_df = df.copy()
-        
+
         # Format numeric columns
         for col in formatted_df.columns:
             if col != 'Metric':
-                # Apply formatting to numeric values without scaling (no K, M, B suffixes)
-                formatted_df[col] = formatted_df[col].apply(
-                    lambda x: format_financial_number(x, use_scaling=False) if pd.notnull(x) and not isinstance(x, str) else x
-                )
-        
+                for idx in formatted_df.index:
+                    val = formatted_df.at[idx, col]
+                    if pd.notnull(val) and not isinstance(val, str):
+                        metric_name = formatted_df.at[idx, 'Metric']
+                        unit = unit_lookup.get(metric_name, 'USD')
+                        if unit in ('USD/shares', 'pure'):
+                            decimals = 2
+                        elif unit == 'shares':
+                            decimals = 0
+                        else:
+                            decimals = 0
+                        formatted_df.at[idx, col] = format_financial_number(val, decimals=decimals, use_scaling=False)
+
         return formatted_df
     
     def format_statement(self, data, statement_type, company_name=None, output_file=None):
@@ -224,7 +240,7 @@ class DataFormatter:
         df = self._create_dataframe(data)
         
         # Apply formatting
-        formatted_df = self._format_dataframe(df)
+        formatted_df = self._format_dataframe(df, data)
         
         # Add company name if not already present
         if company_name and 'Company' not in formatted_df.columns:
@@ -241,6 +257,8 @@ class DataFormatter:
             return self._output_json(formatted_df, statement_type, company_name, output_file)
         elif self.output_format == 'excel':
             return self._output_excel(formatted_df, statement_type, company_name, output_file, data)
+        elif self.output_format == 'html':
+            return self._output_html(formatted_df, statement_type, company_name, output_file, data)
         else:  # console
             return self._format_for_console(formatted_df, statement_title, company_name)
     
@@ -454,6 +472,514 @@ class DataFormatter:
         logger.info(f"Excel output saved to {output_file}")
         return output_file
     
+    def _output_html(self, df, statement_type, company_name=None, output_file=None, data=None):
+        """
+        Output data as a styled HTML report and open it in the browser.
+        Separates core (builtin) metrics from supplementary (SEC-mapped) ones.
+        """
+        if not output_file:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            company_slug = company_name.replace(" ", "_").lower() if company_name else "company"
+            statement_slug = statement_type.lower()
+            filename = f"{company_slug}_{statement_slug}_{timestamp}.html"
+            output_file = os.path.join(DEFAULT_OUTPUT_DIR, filename)
+
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        statement_title = self._get_statement_title(statement_type)
+        title = f"{company_name} - {statement_title}" if company_name else statement_title
+
+        # Fiscal year note
+        fiscal_note = ""
+        if data and 'metadata' in data and 'fiscal_month' in data['metadata']:
+            fiscal_month = int(data['metadata']['fiscal_month'])
+            month_names = ['January', 'February', 'March', 'April', 'May', 'June',
+                           'July', 'August', 'September', 'October', 'November', 'December']
+            fiscal_note = f"Fiscal year ends in {month_names[fiscal_month - 1]}"
+
+        period_type_label = ""
+        if data and 'metadata' in data:
+            pt = data['metadata'].get('period_type', '')
+            period_type_label = pt.capitalize() if pt else ""
+
+        # Build HTML rows directly from data dict (preserves source info)
+        metadata = data.get('metadata', {}) if data else {}
+        periods = data.get('periods', []) if data else []
+        formatted_periods = {p: self._format_period_header(p, metadata) for p in periods}
+        period_labels = [formatted_periods[p] for p in periods]
+
+        accounting_order = {
+            'Assets': 0, 'Liabilities': 1, 'Equity': 2,
+            'Revenue': 3, 'Income': 4, 'EPS': 5,
+            'OperatingCashFlow': 6, 'InvestingCashFlow': 7, 'FinancingCashFlow': 8,
+        }
+
+        # Split metrics into core (builtin) and supplementary (sec-mapped)
+        core_by_cat = {}
+        supp_by_cat = {}
+        for metric_key, metric_data in (data.get('metrics', {}) if data else {}).items():
+            cat = metric_data['category']
+            source = metric_data.get('source', 'sec')
+            target = core_by_cat if source == 'builtin' else supp_by_cat
+            if cat not in target:
+                target[cat] = []
+            target[cat].append(metric_data)
+
+        def _format_val(val, unit):
+            """Format a single value. USD amounts shown in millions."""
+            if val is None:
+                return None, ''
+            if unit in ('USD/shares', 'pure'):
+                return val, format_financial_number(val, decimals=2, use_scaling=False)
+            elif unit == 'shares':
+                # Shares shown in thousands
+                val_k = val / 1_000
+                return val, format_financial_number(val_k, decimals=0, use_scaling=False)
+            else:
+                # USD amounts: show in millions
+                val_m = val / 1_000_000
+                return val, format_financial_number(val_m, decimals=0, use_scaling=False)
+
+        def _build_rows(metrics_by_cat, num_periods, is_statement_type=None):
+            rows = []
+            # Flatten all metrics with their full ordering, then sort globally
+            all_metrics = []
+            for cat in metrics_by_cat:
+                for m in metrics_by_cat[cat]:
+                    # Global sort key: category order * 1000 + metric order
+                    cat_ord = accounting_order.get(cat, 99)
+                    m_ord = m.get('order', 50)
+                    all_metrics.append((cat_ord * 1000 + m_ord, cat, m))
+
+            all_metrics.sort(key=lambda x: x[0])
+
+            # For IS/BS: no category headers, use indent/subtotal/section instead
+            # For CF: keep category headers
+            use_hierarchy = is_statement_type in ('IS', 'BS')
+            seen_cats = set()
+            seen_sections = set()
+
+            for _, cat, m in all_metrics:
+                name = m.get('display_name', '')
+                unit = m.get('unit', 'USD')
+                indent = m.get('indent', 0)
+                is_subtotal = m.get('is_subtotal', False)
+                section = m.get('section', '')
+
+                if use_hierarchy:
+                    # Insert section headers (e.g., "Earnings per share:")
+                    if section and section not in seen_sections:
+                        seen_sections.add(section)
+                        rows.append(
+                            f'<tr class="section-row"><td colspan="{num_periods + 1}">{section}</td></tr>'
+                        )
+                else:
+                    # Category headers for BS/CF
+                    if cat not in seen_cats:
+                        seen_cats.add(cat)
+                        rows.append(
+                            f'<tr class="category-row"><td colspan="{num_periods + 1}">{cat}</td></tr>'
+                        )
+
+                # Build value cells
+                indent_px = indent * 24
+                subtotal_cls = " subtotal" if is_subtotal else ""
+                indent_style = f' style="padding-left:{16 + indent_px}px"' if indent > 0 else ""
+                cells = [f'<td class="metric-name{subtotal_cls}"{indent_style}>{name}</td>']
+                for p in periods:
+                    raw, formatted = _format_val(m['values'].get(p), unit)
+                    if raw is None:
+                        cells.append('<td class="value na">&mdash;</td>')
+                    else:
+                        css = f"value{subtotal_cls}"
+                        if str(formatted).startswith('-'):
+                            # Accounting style: (1,234) instead of -1,234
+                            formatted = f"({formatted[1:]})"
+                            css += " negative"
+                        cells.append(f'<td class="{css}">{formatted}</td>')
+                rows.append(f'<tr>{"".join(cells)}</tr>')
+            return rows
+
+        core_rows = _build_rows(core_by_cat, len(periods), statement_type)
+        supp_rows = _build_rows(supp_by_cat, len(periods), statement_type)
+
+        # BS reconciliation: Assets = Liabilities + Equity
+        recon_html = ""
+        if statement_type.upper() == 'BS' and data:
+            recon_html = self._build_bs_reconciliation(data, periods, period_labels)
+
+        # Period headers
+        period_headers = ''.join(f'<th class="period">{lbl}</th>' for lbl in period_labels)
+
+        generated_at = datetime.now().strftime("%B %d, %Y at %I:%M %p")
+        supp_count = sum(len(v) for v in supp_by_cat.values())
+
+        supp_section = ""
+        if supp_rows:
+            supp_section = f"""
+  <details class="supplementary">
+    <summary>Additional Details ({supp_count} items from SEC filings)</summary>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          {period_headers}
+        </tr>
+      </thead>
+      <tbody>
+        {"".join(supp_rows)}
+      </tbody>
+    </table>
+  </details>"""
+
+        html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<style>
+  :root {{
+    --bg: #f8f9fa;
+    --card: #ffffff;
+    --border: #dee2e6;
+    --text: #212529;
+    --muted: #6c757d;
+    --cat-bg: #e9ecef;
+    --hover: #f1f3f5;
+    --accent: #0d6efd;
+    --negative: #dc3545;
+    --na: #adb5bd;
+  }}
+  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 2rem;
+  }}
+  .container {{
+    max-width: 1200px;
+    margin: 0 auto;
+  }}
+  .header {{
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem 2rem;
+    margin-bottom: 1.5rem;
+  }}
+  .header h1 {{
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }}
+  .header .subtitle {{
+    color: var(--muted);
+    font-size: 0.9rem;
+  }}
+  .header .badges {{
+    margin-top: 0.75rem;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }}
+  .badge {{
+    display: inline-block;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    background: #e7f1ff;
+    color: #0a58ca;
+  }}
+  .badge.fiscal {{
+    background: #fff3cd;
+    color: #664d03;
+  }}
+  table {{
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 0.88rem;
+  }}
+  thead th {{
+    background: #343a40;
+    color: #fff;
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-weight: 600;
+    position: sticky;
+    top: 0;
+  }}
+  th.period {{
+    text-align: right;
+    min-width: 130px;
+  }}
+  .category-row td {{
+    background: var(--cat-bg);
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.6rem 1rem;
+    border-top: 2px solid var(--border);
+  }}
+  tbody tr:not(.category-row):hover {{
+    background: var(--hover);
+  }}
+  td {{
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid #f0f0f0;
+  }}
+  .metric-name {{
+    font-weight: 500;
+  }}
+  .value {{
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  }}
+  .value.negative {{
+    color: var(--negative);
+  }}
+  .value.na {{
+    color: var(--na);
+    font-style: italic;
+    font-family: inherit;
+  }}
+  .subtotal {{
+    font-weight: 700;
+  }}
+  tr:has(.subtotal) {{
+    border-top: 1px solid #999;
+  }}
+  .section-row td {{
+    padding: 0.7rem 1rem 0.2rem;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--muted);
+    border-bottom: none;
+  }}
+  .supplementary {{
+    margin-top: 1.5rem;
+  }}
+  .supplementary summary {{
+    cursor: pointer;
+    padding: 0.75rem 1rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--muted);
+    margin-bottom: 0.5rem;
+  }}
+  .supplementary summary:hover {{
+    color: var(--text);
+  }}
+  .supplementary table {{
+    opacity: 0.85;
+  }}
+  .footer {{
+    margin-top: 1rem;
+    text-align: center;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>{title}</h1>
+    <div class="subtitle">SEC EDGAR Financial Data &middot; In millions, except per share amounts and shares in thousands</div>
+    <div class="badges">
+      <span class="badge">{statement_title}</span>
+      {"<span class='badge'>" + period_type_label + "</span>" if period_type_label else ""}
+      {"<span class='badge fiscal'>" + fiscal_note + "</span>" if fiscal_note else ""}
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Metric</th>
+        {period_headers}
+      </tr>
+    </thead>
+    <tbody>
+      {"".join(core_rows)}
+    </tbody>
+  </table>
+  {supp_section}
+  {recon_html}
+  <div class="footer">
+    Generated on {generated_at} &middot; Source: SEC EDGAR
+  </div>
+</div>
+</body>
+</html>"""
+
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(html)
+
+        logger.info(f"HTML output saved to {output_file}")
+
+        # Open in browser (only when running standalone, not from web server)
+        if not os.environ.get('EDGAR_WEB_MODE'):
+            try:
+                webbrowser.open(f'file:///{os.path.abspath(output_file).replace(os.sep, "/")}')
+            except Exception:
+                pass
+
+        return output_file
+
+    def _build_bs_reconciliation(self, data, periods, period_labels):
+        """Build an HTML reconciliation check: Assets = Liabilities + Equity."""
+        metrics = data.get('metrics', {})
+
+        # Find raw values — check both core and supplementary metrics
+        totals = {'assets': {}, 'liabilities': {}, 'equity': {}, 'l_and_se': {}}
+        # Priority: builtin=2, sec=1 (higher wins)
+        prio = {'assets': 0, 'liabilities': 0, 'equity': 0, 'l_and_se': 0}
+
+        for m in metrics.values():
+            dn = m.get('display_name', '').lower()
+            tag = m.get('tag', '').lower()
+            unit = m.get('unit', 'USD')
+            src = 2 if m.get('source') == 'builtin' else 1
+            if unit != 'USD':
+                continue
+            if dn == 'total assets' and src > prio['assets']:
+                totals['assets'] = m['values']
+                prio['assets'] = src
+            elif dn == 'total liabilities' and src > prio['liabilities']:
+                totals['liabilities'] = m['values']
+                prio['liabilities'] = src
+            elif 'liabilitiesandstockholdersequity' in tag.replace(':', '').replace('-', ''):
+                if src > prio['l_and_se']:
+                    totals['l_and_se'] = m['values']
+                    prio['l_and_se'] = src
+            elif dn == "total equity" and src * 10 + 2 > prio['equity']:
+                totals['equity'] = m['values']
+                prio['equity'] = src * 10 + 2  # prefer builtin + "total equity" over "shareholders' equity"
+            elif dn == "total shareholders' equity" and src * 10 + 1 > prio['equity']:
+                totals['equity'] = m['values']
+                prio['equity'] = src * 10 + 1
+
+        if not totals['assets'] or not (totals['liabilities'] or totals['equity']):
+            return ""
+
+        def _fmt(val):
+            if val is None:
+                return '&mdash;', ''
+            v_m = val / 1_000_000
+            formatted = format_financial_number(v_m, decimals=0, use_scaling=False)
+            if formatted.startswith('-'):
+                return f"({formatted[1:]})", ' class="negative"'
+            return formatted, ''
+
+        header_cells = ''.join(f'<th class="period">{lbl}</th>' for lbl in period_labels)
+
+        rows = []
+
+        # Row: Total Assets
+        cells = '<td class="metric-name subtotal">Total assets (A)</td>'
+        for p in periods:
+            f, cls = _fmt(totals['assets'].get(p))
+            cells += f'<td class="value subtotal"{cls}>{f}</td>'
+        rows.append(f'<tr>{cells}</tr>')
+
+        # Row: Total Liabilities
+        cells = '<td class="metric-name">Total liabilities (B)</td>'
+        for p in periods:
+            f, cls = _fmt(totals['liabilities'].get(p))
+            cells += f'<td class="value"{cls}>{f}</td>'
+        rows.append(f'<tr>{cells}</tr>')
+
+        # Row: Total Equity
+        equity_label = "Total equity (C)" if prio['equity'] % 10 == 2 else "Total shareholders' equity (C)"
+        cells = f'<td class="metric-name">{equity_label}</td>'
+        for p in periods:
+            f, cls = _fmt(totals['equity'].get(p))
+            cells += f'<td class="value"{cls}>{f}</td>'
+        rows.append(f'<tr>{cells}</tr>')
+
+        # Compute gap: A - L - E
+        gaps = {}
+        for p in periods:
+            a = totals['assets'].get(p)
+            l = totals['liabilities'].get(p)
+            e = totals['equity'].get(p)
+            if a is not None and l is not None and e is not None:
+                gaps[p] = a - l - e
+            else:
+                gaps[p] = None
+
+        # If there's a gap, show it as "Other (redeemable equity, NCI, etc.)"
+        has_gap = any(g is not None and abs(g) > 0.5 for g in gaps.values())
+        if has_gap:
+            cells = '<td class="metric-name" style="font-style:italic;color:#6c757d">Other items (redeemable/temporary equity)</td>'
+            for p in periods:
+                f, cls = _fmt(gaps[p])
+                cells += f'<td class="value" style="font-style:italic;color:#6c757d"{cls}>{f}</td>'
+            rows.append(f'<tr>{cells}</tr>')
+
+        # Row: L + E + Other  (should equal A)
+        cells = '<td class="metric-name subtotal">Liabilities + Equity + Other (B + C + D)</td>' if has_gap else '<td class="metric-name subtotal">Liabilities + Equity (B + C)</td>'
+        for p in periods:
+            l = totals['liabilities'].get(p)
+            e = totals['equity'].get(p)
+            g = gaps.get(p, 0) or 0
+            if l is not None and e is not None:
+                f, cls = _fmt(l + e + g)
+            else:
+                f, cls = '&mdash;', ''
+            cells += f'<td class="value subtotal"{cls}>{f}</td>'
+        rows.append(f'<tr>{cells}</tr>')
+
+        # Row: Final difference (should be 0 now)
+        cells = '<td class="metric-name">Difference</td>'
+        all_zero = True
+        for p in periods:
+            a = totals['assets'].get(p)
+            l = totals['liabilities'].get(p)
+            e = totals['equity'].get(p)
+            g = gaps.get(p, 0) or 0
+            if a is not None and l is not None and e is not None:
+                diff = a - l - e - g  # always 0 by construction
+                # Cross-check with LiabilitiesAndStockholdersEquity if available
+                l_se = totals['l_and_se'].get(p)
+                if l_se is not None:
+                    diff = a - l_se
+                if abs(diff) > 0.5:
+                    all_zero = False
+                f, cls = _fmt(diff)
+            else:
+                f, cls = '&mdash;', ''
+                all_zero = False
+            cells += f'<td class="value"{cls}>{f}</td>'
+        rows.append(f'<tr>{cells}</tr>')
+
+        if all_zero:
+            status = '<span style="color:#198754;font-weight:600">Balanced</span>'
+        else:
+            status = '<span style="color:#dc3545;font-weight:600">Imbalanced</span>'
+
+        return f"""
+  <div class="recon" style="margin-top:1.5rem">
+    <div style="font-weight:600;font-size:0.9rem;margin-bottom:0.5rem;color:#6c757d">
+      Reconciliation Check: Assets = Liabilities + Equity &nbsp; {status}
+    </div>
+    <table>
+      <thead><tr><th>Item</th>{header_cells}</tr></thead>
+      <tbody>{"".join(rows)}</tbody>
+    </table>
+  </div>"""
+
     def _format_for_console(self, df, title, company_name=None):
         """
         Format data for console output.

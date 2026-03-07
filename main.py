@@ -138,6 +138,8 @@ def interactive_mode():
             default_file += ".csv"
         elif output_format == "json":
             default_file += ".json"
+        elif output_format == "html":
+            default_file += ".html"
             
         file_input = input(f"\nOutput file (default: {default_file}): ")
         output_file = file_input if file_input else default_file

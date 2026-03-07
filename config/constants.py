@@ -86,7 +86,7 @@ XBRL_TAGS = {
 
 # HTTP Request Headers
 HTTP_HEADERS = {
-    "User-Agent": "Financial Statement Analyzer 1.0 (contact@example.com)"
+    "User-Agent": "Sens Advisor 1.0 (consult@sensadvisor.com)"
 }
 
 # Cache configuration
