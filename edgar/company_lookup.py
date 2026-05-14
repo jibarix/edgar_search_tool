@@ -29,18 +29,20 @@ def format_cik(cik):
 
 
 def get_company_tickers():
+    """Retrieve the SEC company tickers feed indexed for lookup.
+
+    Returns a dict with two sub-indexes so callers can rank ticker and
+    name hits independently:
+        {
+            "by_name":   normalized lowercase name -> company entry,
+            "by_ticker": uppercase ticker          -> company entry,
+        }
+    Each entry has the shape {"cik", "ticker", "name"}.
     """
-    Retrieve the company tickers JSON file from SEC.
-    
-    Returns:
-        dict: Company tickers data with CIK as keys
-    """
-    # Check cache first
-    cached_data = company_cache.get("company_tickers")
+    cached_data = company_cache.get("company_tickers_v2")
     if cached_data:
         return cached_data
-    
-    # If not in cache, fetch from SEC
+
     try:
         response = retry_request(
             httpx.get,
@@ -51,81 +53,89 @@ def get_company_tickers():
             retry_delay=API_RETRY_DELAY
         )
         response.raise_for_status()
-        
-        # Process the data
         data = response.json()
-        
-        # Transform data for easier lookup by company name
-        companies_by_name = {}
+
+        by_name: dict[str, dict] = {}
+        by_ticker: dict[str, dict] = {}
         for _, company_info in data.items():
             cik = company_info["cik_str"]
             ticker = company_info["ticker"]
-            title = company_info["title"].lower()
-            
-            # Create normalized company name for better matching
-            normalized_title = re.sub(r'[^\w\s]', '', title)
-            
-            companies_by_name[normalized_title] = {
+            title = company_info["title"]
+            normalized_title = re.sub(r'[^\w\s]', '', title.lower()).strip()
+
+            entry = {
                 "cik": format_cik(cik),
                 "ticker": ticker,
-                "name": company_info["title"]
+                "name": title,
             }
-            
-            # Also add by ticker for direct ticker lookups
-            companies_by_name[ticker.lower()] = {
-                "cik": format_cik(cik),
-                "ticker": ticker,
-                "name": company_info["title"]
-            }
-        
-        # Cache the processed data
-        company_cache.set("company_tickers", companies_by_name)
-        
-        return companies_by_name
-    
+            # First-wins on name collisions — SEC feed is mostly stable.
+            by_name.setdefault(normalized_title, entry)
+            by_ticker[ticker.upper()] = entry
+
+        result = {"by_name": by_name, "by_ticker": by_ticker}
+        company_cache.set("company_tickers_v2", result)
+        return result
+
     except httpx.HTTPError as e:
         print(f"Error fetching company tickers: {e}")
-        return {}
+        return {"by_name": {}, "by_ticker": {}}
+
+
+# Common corporate suffixes we strip / try-appending when resolving names.
+_CORP_SUFFIXES = ("inc", "corp", "corporation", "company", "co", "ltd",
+                  "limited", "lp", "llc", "plc", "holdings", "group")
 
 
 def search_company(query):
+    """Search for a company by name or ticker.
+
+    Ranking order (first non-empty rule wins):
+        1. Exact ticker (case-insensitive)         -> 1 result
+        2. Exact normalized name                   -> 1 result
+        3. Name == query + common corporate suffix -> 1 result
+           (catches "Apple" -> "Apple Inc")
+        4. Names starting with query, shortest first (so "Apple" prefers
+           "Apple Inc" over "Apple Hospitality REIT Inc")
+        5. Fuzzy name match over names only — tickers excluded so short
+           tickers like APLE don't outrank longer names by ratio.
     """
-    Search for a company by name or ticker.
-    
-    Args:
-        query (str): Company name or ticker to search for
-        
-    Returns:
-        list: List of matching companies with CIK, name and ticker
-    """
-    # Normalize the query
-    query = query.lower().strip()
-    normalized_query = re.sub(r'[^\w\s]', '', query)
-    
-    # Get company tickers data
-    companies = get_company_tickers()
-    
-    # Check for exact match
-    if query in companies:
-        return [companies[query]]
-    
-    if normalized_query in companies:
-        return [companies[normalized_query]]
-    
-    # Check for ticker match (case insensitive)
-    ticker_matches = [
-        company for name, company in companies.items()
-        if company["ticker"].lower() == query
+    q = query.strip()
+    q_lower = q.lower()
+    q_norm = re.sub(r'[^\w\s]', '', q_lower).strip()
+    if not q_norm:
+        return []
+
+    data = get_company_tickers()
+    by_name = data["by_name"]
+    by_ticker = data["by_ticker"]
+
+    # 1. Exact ticker
+    if q.upper() in by_ticker:
+        return [by_ticker[q.upper()]]
+
+    # 2. Exact normalized name
+    if q_norm in by_name:
+        return [by_name[q_norm]]
+
+    # 3. Query + standard suffix
+    for suffix in _CORP_SUFFIXES:
+        candidate = f"{q_norm} {suffix}"
+        if candidate in by_name:
+            return [by_name[candidate]]
+
+    # 4. Prefix matches, shortest name first
+    prefix_token = q_norm + " "
+    prefix_hits = [
+        entry for norm, entry in by_name.items()
+        if norm.startswith(prefix_token)
     ]
-    if ticker_matches:
-        return ticker_matches
-    
-    # If no exact match, use fuzzy matching to find similar names
-    company_names = list(companies.keys())
-    matches = get_close_matches(normalized_query, company_names, n=5, cutoff=0.6)
-    
-    # Return the matching companies
-    return [companies[match] for match in matches if match in companies]
+    if prefix_hits:
+        prefix_hits.sort(key=lambda e: len(e["name"]))
+        return prefix_hits[:5]
+
+    # 5. Fuzzy fallback over names only
+    fuzzy = get_close_matches(q_norm, list(by_name.keys()), n=5, cutoff=0.6)
+    return [by_name[m] for m in fuzzy]
 
 
 def get_cik_by_company_name(company_name):
