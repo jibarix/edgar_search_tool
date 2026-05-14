@@ -75,6 +75,7 @@ _BUILTIN_TAGS = {
     "OtherLiabilitiesNoncurrent":                    {"statement": "BS", "category": "Liabilities", "display_name": "Other non-current liabilities",   "order": 370, "indent": 1},
 
     "Liabilities":                                   {"statement": "BS", "category": "Liabilities", "display_name": "Total liabilities",               "order": 399, "indent": 0, "is_subtotal": True},
+    "CommitmentsAndContingencies":                   {"statement": "BS", "category": "Liabilities", "display_name": "Commitments and contingencies",   "order": 395, "indent": 0},
 
     # ── Balance Sheet: Equity ──
     "StockholdersEquity":                                                            {"statement": "BS", "category": "Equity", "display_name": "Total shareholders' equity",  "order": 490, "indent": 0, "is_subtotal": True, "section": "Shareholders' equity:"},
@@ -134,7 +135,23 @@ _BUILTIN_TAGS = {
 
     "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": {"statement": "IS", "category": "Income", "display_name": "Income before provision for income taxes", "order": 40, "indent": 0, "is_subtotal": True},
     "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments": {"statement": "IS", "category": "Income", "display_name": "Income before provision for income taxes", "order": 40, "indent": 0, "is_subtotal": True},
-    "IncomeTaxExpenseBenefit":                               {"statement": "IS", "category": "Income", "display_name": "Provision for income taxes",   "order": 45, "indent": 0},
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic":              {"statement": "IS", "category": "Income", "display_name": "Domestic pre-tax income",   "order": 41, "indent": 1, "section": "Pre-tax income by jurisdiction:"},
+    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign":               {"statement": "IS", "category": "Income", "display_name": "Foreign pre-tax income",    "order": 42, "indent": 1},
+
+    "IncomeTaxExpenseBenefit":                                                  {"statement": "IS", "category": "Income", "display_name": "Provision for income taxes",         "order": 45,   "indent": 0},
+    # Tax detail block: jurisdiction summary (indent 1) precedes current sub-row (indent 2).
+    "FederalIncomeTaxExpenseBenefitContinuingOperations":                       {"statement": "IS", "category": "Income", "display_name": "Federal income tax expense",         "order": 46.0, "indent": 1, "section": "Provision for income taxes detail:"},
+    "CurrentFederalTaxExpenseBenefit":                                          {"statement": "IS", "category": "Income", "display_name": "Federal current tax",                "order": 46.1, "indent": 2},
+    "ForeignIncomeTaxExpenseBenefitContinuingOperations":                       {"statement": "IS", "category": "Income", "display_name": "Foreign income tax expense",         "order": 47.0, "indent": 1},
+    "CurrentForeignTaxExpenseBenefit":                                          {"statement": "IS", "category": "Income", "display_name": "Foreign current tax",                "order": 47.1, "indent": 2},
+    "StateAndLocalIncomeTaxExpenseBenefitContinuingOperations":                 {"statement": "IS", "category": "Income", "display_name": "State and local income tax expense", "order": 48.0, "indent": 1},
+    "CurrentStateAndLocalTaxExpenseBenefit":                                    {"statement": "IS", "category": "Income", "display_name": "State and local current tax",        "order": 48.1, "indent": 2},
+    # Across-jurisdiction current/deferred summary lines, in case companies report this view instead.
+    "CurrentIncomeTaxExpenseBenefit":                                           {"statement": "IS", "category": "Income", "display_name": "Current tax expense",                "order": 48.5, "indent": 1},
+    "DeferredIncomeTaxExpenseBenefitContinuingOperations":                      {"statement": "IS", "category": "Income", "display_name": "Deferred tax expense/(benefit)",     "order": 48.6, "indent": 1},
+    "IncomeTaxReconciliationChangeInDeferredTaxAssetsValuationAllowance":       {"statement": "IS", "category": "Income", "display_name": "Change in valuation allowance",      "order": 48.7, "indent": 2},
+    "EffectiveIncomeTaxRateContinuingOperations":                               {"statement": "IS", "category": "Income", "display_name": "Effective tax rate",                 "order": 49,   "indent": 0},
+
     "NetIncomeLoss":                                         {"statement": "IS", "category": "Income", "display_name": "Net income",                   "order": 50, "indent": 0, "is_subtotal": True},
     "ProfitLoss":                                            {"statement": "IS", "category": "Income", "display_name": "Net income",                   "order": 50, "indent": 0, "is_subtotal": True},
     "NetIncomeLossAvailableToCommonStockholdersBasic":       {"statement": "IS", "category": "Income", "display_name": "Net income attributable to common shareholders", "order": 52, "indent": 0},
@@ -143,9 +160,29 @@ _BUILTIN_TAGS = {
     # ── Income Statement: EPS ──
     "EarningsPerShareBasic":                                 {"statement": "IS", "category": "EPS", "display_name": "Basic",                           "order": 60, "indent": 1, "section": "Earnings per share:"},
     "EarningsPerShareDiluted":                               {"statement": "IS", "category": "EPS", "display_name": "Diluted",                         "order": 61, "indent": 1},
-    "WeightedAverageNumberOfShareOutstandingBasicAndDiluted": {"statement": "IS", "category": "EPS", "display_name": "Basic and diluted",              "order": 72, "indent": 1},
+    "CommonStockDividendsPerShareDeclared":                  {"statement": "IS", "category": "EPS", "display_name": "Dividends declared per share",    "order": 65, "indent": 1, "section": "Dividends:"},
+    "CommonStockDividendsPerShareCashPaid":                  {"statement": "IS", "category": "EPS", "display_name": "Dividends paid per share",        "order": 66, "indent": 1},
     "WeightedAverageNumberOfSharesOutstandingBasic":         {"statement": "IS", "category": "EPS", "display_name": "Basic",                           "order": 70, "indent": 1, "section": "Shares used in computing earnings per share:"},
     "WeightedAverageNumberOfDilutedSharesOutstanding":       {"statement": "IS", "category": "EPS", "display_name": "Diluted",                         "order": 71, "indent": 1},
+    "WeightedAverageNumberOfShareOutstandingBasicAndDiluted": {"statement": "IS", "category": "EPS", "display_name": "Basic and diluted",              "order": 72, "indent": 1},
+    "IncrementalCommonSharesAttributableToShareBasedPaymentArrangements": {"statement": "IS", "category": "EPS", "display_name": "Dilutive effect of share-based awards", "order": 73, "indent": 2},
+
+    # ── Comprehensive Income (OCI) ──
+    # Routed to category "OCI"; only the CI statement view includes this category.
+    "OtherComprehensiveIncomeLossNetOfTax":                                      {"statement": "CI", "category": "OCI", "display_name": "Other comprehensive income/(loss), net of tax",                 "order": 80, "indent": 0, "is_subtotal": True, "section": "Other comprehensive income/(loss):"},
+    "OtherComprehensiveIncomeLossNetOfTaxPortionAttributableToParent":           {"statement": "CI", "category": "OCI", "display_name": "Other comprehensive income/(loss), net of tax",                 "order": 80, "indent": 0, "is_subtotal": True, "section": "Other comprehensive income/(loss):"},
+    "OtherComprehensiveIncomeForeignCurrencyTransactionAndTranslationAdjustmentNetOfTax": {"statement": "CI", "category": "OCI", "display_name": "Foreign currency translation adjustments",            "order": 81, "indent": 1},
+    "OtherComprehensiveIncomeLossForeignCurrencyTransactionAndTranslationAdjustmentNetOfTax": {"statement": "CI", "category": "OCI", "display_name": "Foreign currency translation adjustments",        "order": 81, "indent": 1},
+    "OtherComprehensiveIncomeLossAvailableForSaleSecuritiesAdjustmentNetOfTax":  {"statement": "CI", "category": "OCI", "display_name": "Unrealized gains/(losses) on available-for-sale securities",    "order": 82, "indent": 1},
+    "OtherComprehensiveIncomeUnrealizedHoldingGainLossOnSecuritiesArisingDuringPeriodNetOfTax": {"statement": "CI", "category": "OCI", "display_name": "Unrealized holding gains/(losses) on securities", "order": 82, "indent": 1},
+    "OtherComprehensiveIncomeLossDerivativesQualifyingAsHedgesNetOfTax":         {"statement": "CI", "category": "OCI", "display_name": "Unrealized gains/(losses) on cash flow hedges",                 "order": 83, "indent": 1},
+    "OtherComprehensiveIncomeLossCashFlowHedgeGainLossBeforeReclassificationAfterTax": {"statement": "CI", "category": "OCI", "display_name": "Cash flow hedge gains/(losses) before reclassification",  "order": 83.2, "indent": 1},
+    "OtherComprehensiveIncomeLossCashFlowHedgeGainLossReclassificationAfterTax": {"statement": "CI", "category": "OCI", "display_name": "Reclassification adjustment for (gains)/losses included in net income", "order": 83.5, "indent": 1},
+    "OtherComprehensiveIncomeLossCashFlowHedgeGainLossAfterReclassificationAndTax": {"statement": "CI", "category": "OCI", "display_name": "Cash flow hedge gains/(losses) after reclassification",     "order": 83, "indent": 1},
+    "OtherComprehensiveIncomeLossPensionAndOtherPostretirementBenefitPlansAdjustmentNetOfTax": {"statement": "CI", "category": "OCI", "display_name": "Pension and post-retirement plan adjustments",   "order": 84, "indent": 1},
+    "OtherComprehensiveIncomeLossReclassificationAdjustmentFromAOCIForSaleOfSecuritiesNetOfTax": {"statement": "CI", "category": "OCI", "display_name": "Reclassification adjustment for securities sold", "order": 85, "indent": 1},
+
+    "ComprehensiveIncomeNetOfTaxIncludingPortionAttributableToNoncontrollingInterest": {"statement": "CI", "category": "OCI", "display_name": "Comprehensive income (incl. non-controlling interest)", "order": 89, "indent": 0, "is_subtotal": True},
 
     # ── Cash Flow: Operating ──
     "NetCashProvidedByUsedInOperatingActivities":            {"statement": "CF", "category": "OperatingCashFlow",  "display_name": "Net Cash from Operations",             "order": 0},
@@ -174,11 +211,40 @@ _BUILTIN_TAGS = {
     "ProceedsFromIssuanceOfCommonStock":                    {"statement": "CF", "category": "FinancingCashFlow",  "display_name": "Proceeds from Stock Issuance",         "order": 40},
 }
 
+# Tags that should never be classified. These are footnote / axis-member /
+# rate-reconciliation disclosures the auto-derived SEC mapping placed on a
+# statement, but they aren't real statement lines.
+_SKIP_TAGS = frozenset({
+    # Share-count of buybacks — lives in equity changes, not the IS.
+    "StockRepurchasedAndRetiredDuringPeriodShares",
+    "StockRepurchasedAndRetiredDuringPeriodValue",
+    # Tax reconciliation footnote disclosures (not BS lines).
+    "DeferredTaxAssetsGross",
+    "DeferredTaxAssetsTaxCreditCarryforwards",
+    "DeferredTaxAssetsTaxDeferredExpense",
+    "DeferredTaxAssetsValuationAllowance",
+    "UnrecognizedTaxBenefits",
+    "UnrecognizedTaxBenefitsIncomeTaxPenaltiesAndInterestExpense",
+    # Auto-mapping classified these as Assets — they belong on the liability side
+    # but `TaxesPayableCurrent` already provides the canonical view.
+    "AccruedIncomeTaxes",
+    "AccruedIncomeTaxesCurrent",
+    "AccruedIncomeTaxesNoncurrent",
+    # Buyback excise tax and accelerated-program footnote items.
+    "ShareRepurchaseProgramExciseTax",
+    "ShareRepurchaseProgramExciseTaxPayable",
+    "AcceleratedShareRepurchasesAdjustmentToRecordedAmount",
+    # Non-standard total-noncurrent-assets variant; canonical tag is AssetsNoncurrent.
+    "NoncurrentAssets",
+})
+
 # Categories that belong to each statement type
 _STATEMENT_CATEGORIES = {
     "BS":  ["Assets", "Liabilities", "Equity"],
     "IS":  ["Revenue", "Income", "EPS"],
     "CF":  ["OperatingCashFlow", "InvestingCashFlow", "FinancingCashFlow"],
+    "CI":  ["Revenue", "Income", "EPS", "OCI"],
+    "EQ":  ["Equity"],
 }
 
 
@@ -232,7 +298,13 @@ class TagClassifier:
         return self._lookup(concept_name)
 
     def _lookup(self, concept_name):
-        """Check builtin overrides first, then SEC mapping. Tags source."""
+        """Check builtin overrides first, then SEC mapping. Tags source.
+
+        Returns None for tags listed in ``_SKIP_TAGS`` even if the SEC mapping
+        has them — that filters out footnote / disclosure pollution.
+        """
+        if concept_name in _SKIP_TAGS:
+            return None
         if concept_name in _BUILTIN_TAGS:
             result = dict(_BUILTIN_TAGS[concept_name])
             result['source'] = 'builtin'

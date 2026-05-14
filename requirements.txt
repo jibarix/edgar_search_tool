@@ -1,9 +1,0 @@
-requests==2.28.2
-pandas
-XlsxWriter
-tabulate
-openpyxl
-beautifulsoup4
-lxml
-jsonschema
-flask

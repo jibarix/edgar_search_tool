@@ -1,16 +1,18 @@
-"""
-EDGAR Statement Extractor - Extracts financial statements from SEC filings.
+"""EDGAR Statement Extractor - Extracts financial statements from SEC filings.
 
-This module contains functions for extracting specific financial statements
-from SEC EDGAR filings, leveraging the HTML structure of these documents.
+HTML/XML fallback used when XBRL Company Facts data is unavailable or
+incomplete. Walks the FilingSummary to find statement files and parses
+their tables.
 """
+from __future__ import annotations
 
 import os
 import logging
 import calendar
+
+import httpx
 import pandas as pd
 import numpy as np
-import requests
 from bs4 import BeautifulSoup
 
 from config.constants import HTTP_HEADERS
@@ -89,9 +91,6 @@ class StatementExtractor:
     def __init__(self):
         """Initialize the statement extractor."""
         self.headers = HTTP_HEADERS.copy()
-        self.headers['User-Agent'] = (
-            "Financial Statement Analyzer 1.0 (example@example.com)"
-        )
     
     def cik_matching_ticker(self, ticker):
         """
@@ -107,21 +106,22 @@ class StatementExtractor:
         
         # Try to get from company_tickers.json
         try:
-            response = requests.get(
-                "https://www.sec.gov/files/company_tickers.json", 
-                headers=self.headers
+            response = httpx.get(
+                "https://www.sec.gov/files/company_tickers.json",
+                headers=self.headers,
+                timeout=30,
             )
             response.raise_for_status()
             ticker_json = response.json()
-            
+
             for company in ticker_json.values():
                 if company["ticker"] == ticker:
                     return format_cik(company["cik_str"])
-            
+
             logger.warning(f"Ticker {ticker} not found in SEC database")
             return None
-            
-        except requests.RequestException as e:
+
+        except httpx.HTTPError as e:
             logger.error(f"Error fetching company tickers: {e}")
             return None
     
@@ -176,22 +176,19 @@ class StatementExtractor:
             dict: Dictionary mapping statement types to their file names.
         """
         try:
-            # Set up request session and get filing summary
-            session = requests.Session()
             cik = self.cik_matching_ticker(ticker)
             if not cik:
                 logger.error(f"Could not find CIK for ticker {ticker}")
                 return {}
-                
-            # Format the accession number
+
             accn_no_dashes = accession_number.replace("-", "")
-            
+
             base_link = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn_no_dashes}"
             filing_summary_link = f"{base_link}/FilingSummary.xml"
-            
+
             logger.info(f"Fetching filing summary from: {filing_summary_link}")
-            filing_summary_response = session.get(
-                filing_summary_link, headers=self.headers
+            filing_summary_response = httpx.get(
+                filing_summary_link, headers=self.headers, timeout=30
             )
             filing_summary_response.raise_for_status()
             filing_summary_content = filing_summary_response.content.decode("utf-8")
@@ -214,7 +211,7 @@ class StatementExtractor:
             logger.info(f"Found statement files: {list(statement_file_names_dict.keys())}")
             return statement_file_names_dict
             
-        except requests.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"An error occurred fetching filing summary: {e}")
             return {}
         except Exception as e:
@@ -323,16 +320,16 @@ class StatementExtractor:
                 return None
             
             # Get the statement file
-            response = requests.get(statement_link, headers=self.headers)
+            response = httpx.get(statement_link, headers=self.headers, timeout=30)
             response.raise_for_status()
-            
+
             # Parse the statement HTML/XML
             if statement_link.endswith(".xml"):
                 return BeautifulSoup(response.content, "lxml-xml")
             else:
                 return BeautifulSoup(response.content, "lxml")
-                
-        except requests.RequestException as e:
+
+        except httpx.HTTPError as e:
             logger.error(f"Request error fetching statement: {e}")
             return None
         except Exception as e:

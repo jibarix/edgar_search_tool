@@ -49,15 +49,15 @@ For more information on SEC's API requirements, visit: https://www.sec.gov/devel
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.9 or higher
 - pip (Python package installer)
 
 ### Steps
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/edgar-financial-tool.git
-   cd edgar-financial-tool
+   git clone https://github.com/jibarix/edgar_search_tool.git
+   cd edgar_search_tool
    ```
 
 2. Create a virtual environment:
@@ -71,10 +71,13 @@ For more information on SEC's API requirements, visit: https://www.sec.gov/devel
    source venv/bin/activate
    ```
 
-3. Install the dependencies:
+3. Install the package:
    ```bash
-   pip install -r requirements.txt
+   pip install -e .
    ```
+
+   Dependencies are declared in `pyproject.toml` and pinned to known-good
+   versions.
 
 4. When you're done using the tool, you can deactivate the virtual environment:
    ```bash
@@ -149,6 +152,36 @@ python main.py -c "Amazon.com Inc" -s IS -p quarterly -n 4 -f json
 python main.py -c "Microsoft Corporation" -s CF -p annual -n 2 -f console
 ```
 
+## MCP Server
+
+The same retrieval and parsing pipeline is exposed as an [MCP](https://modelcontextprotocol.io)
+stdio server so MCP clients (e.g. Claude Code) can call EDGAR directly in a
+conversation instead of running `main.py`.
+
+### Install
+
+```bash
+pip install -e ".[mcp]"
+```
+
+### Register with Claude Code
+
+```bash
+claude mcp add edgar -- python -m edgar_mcp
+```
+
+### Available tools
+
+| Tool | Purpose |
+|------|---------|
+| `lookup_company(query)` | Resolve a name or ticker to its SEC CIK (fuzzy-matched). |
+| `get_financial_statement(cik_or_ticker, statement_type, period_type, num_periods)` | Normalized BS / IS / CF / EQ / CI / ALL by period. |
+| `get_concept(cik_or_ticker, concept, taxonomy)` | Full historical time series for a single XBRL concept. |
+| `search_companies(sic, industry, country_inc, revenue_country, name_substring, limit)` | Filter the local SIC/country/revenue classification index. |
+
+`search_companies` reads `data/company_index.json`; build it once with
+`python -m edgar.company_classifier --build` before querying.
+
 ## Understanding the Data
 
 ### Financial Statement Types
@@ -178,37 +211,41 @@ The tool normalizes this data and organizes it by financial statement type, maki
 ## Project Structure
 
 ```
-edgar_financial_tool/
+edgar_search_tool/
 │
-├── main.py                     # Main entry point with user interface
-├── requirements.txt            # Dependencies list
+├── main.py                     # CLI entry point
+├── web_app.py                  # Flask UI for browsing the index
+├── pyproject.toml              # Build config + pinned dependencies
+├── requirements.lock           # Hash-pinned lockfile (--require-hashes)
+├── LICENSE                     # MIT license
 ├── README.md                   # Documentation
 │
+├── edgar_mcp/                  # MCP stdio server (optional [mcp] extra)
+│   ├── __main__.py             # `python -m edgar_mcp` entry point
+│   └── server.py               # FastMCP tools wrapping the edgar/ package
+│
 ├── edgar/                      # Core package
-│   ├── __init__.py             # Package initialization
-│   ├── company_lookup.py       # CIK and company lookup functionality
-│   ├── filing_retrieval.py     # Access SEC APIs and retrieve data
-│   ├── xbrl_parser.py          # Process and normalize API data
-│   ├── data_formatter.py       # Format financial data for output
-│   └── statement_extractor.py  # Extract statements from HTML/XML filings
+│   ├── company_lookup.py       # CIK and company lookup
+│   ├── filing_retrieval.py     # SEC submissions, Company Facts, Company Concept
+│   ├── xbrl_parser.py          # Normalize XBRL facts by period and category
+│   ├── tag_classifier.py       # Map XBRL tags to statement sections
+│   ├── statement_extractor.py  # HTML/XML fallback when XBRL is incomplete
+│   ├── data_formatter.py       # CSV / JSON / Excel / HTML / console output
+│   └── company_classifier.py   # Build SIC/country/revenue index from SEC bulk data
 │
 ├── config/
-│   ├── __init__.py
 │   ├── settings.py             # Configuration settings
-│   └── constants.py            # API endpoints, filing types, etc.
+│   ├── constants.py            # API endpoints, filing types, etc.
+│   └── sic_codes.py            # SIC -> sub-industry mapping
 │
 ├── utils/
-│   ├── __init__.py
 │   ├── validators.py           # Input validation
-│   ├── cache.py                # Data caching
-│   └── helpers.py              # Utility functions
+│   ├── cache.py                # File-based pickle cache
+│   └── helpers.py              # retry_request with exponential backoff
 │
-└── tests/                      # Unit and integration tests
-    ├── __init__.py
-    ├── test_company_lookup.py
-    ├── test_filing_retrieval.py
-    ├── test_xbrl_parser.py
-    └── test_data_formatter.py
+└── data/                       # Persisted classifier inputs
+    ├── company_index.json
+    └── sec_tag_mapping.json
 ```
 
 ## Limitations

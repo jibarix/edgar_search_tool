@@ -1,9 +1,12 @@
 venv/
+.venv/
 cache/
 logs/
 output/
 __pycache__/
 *.pyc
+*.egg-info/
+report.json
 .claude/
 data/sec_datasets/*.zip
 data/sec_datasets/*/

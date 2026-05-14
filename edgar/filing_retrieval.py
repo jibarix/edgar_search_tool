@@ -1,25 +1,23 @@
-"""
-Module for retrieving SEC EDGAR filings and data through SEC APIs.
-"""
+"""Module for retrieving SEC EDGAR filings and data through SEC APIs."""
+from __future__ import annotations
 
-import os
 import json
 import logging
 import time
 import threading
-import requests
-from datetime import datetime
+
+import httpx
 from jsonschema import validate, ValidationError
 
 from config.constants import (
-    SEC_BASE_URL, EDGAR_BASE_URL, SUBMISSIONS_URL, HTTP_HEADERS, ERROR_MESSAGES
+    SEC_BASE_URL, SUBMISSIONS_URL, HTTP_HEADERS, ERROR_MESSAGES
 )
 from config.settings import (
-    API_REQUEST_TIMEOUT, API_RETRY_COUNT, API_RETRY_DELAY, 
-    RATE_LIMIT_REQUESTS_PER_SECOND, DEFAULT_OUTPUT_DIR
+    API_REQUEST_TIMEOUT, API_RETRY_COUNT, API_RETRY_DELAY,
+    RATE_LIMIT_REQUESTS_PER_SECOND,
 )
 from utils.cache import Cache
-from utils.helpers import retry_request, get_filing_dates, parse_date
+from utils.helpers import retry_request, parse_date
 from utils.validators import is_valid_cik, is_valid_filing_type
 
 # Initialize logger
@@ -103,7 +101,7 @@ class FilingRetrieval:
         try:
             self._respect_rate_limit()
             response = retry_request(
-                requests.get,
+                httpx.get,
                 url,
                 headers=HTTP_HEADERS,
                 timeout=API_REQUEST_TIMEOUT,
@@ -116,7 +114,7 @@ class FilingRetrieval:
                 return None
             filing_cache.set(cache_key, submissions_data)
             return submissions_data
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"Error fetching company submissions: {e}")
             return None
     
@@ -202,7 +200,7 @@ class FilingRetrieval:
         try:
             self._respect_rate_limit()
             response = retry_request(
-                requests.get,
+                httpx.get,
                 file_url,
                 headers=HTTP_HEADERS,
                 timeout=API_REQUEST_TIMEOUT,
@@ -213,7 +211,7 @@ class FilingRetrieval:
             historical_data = response.json()
             filing_cache.set(cache_key, historical_data)
             return historical_data
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"Error fetching historical filings: {e}")
             return None
     
@@ -292,7 +290,7 @@ class FilingRetrieval:
         try:
             self._respect_rate_limit()
             response = retry_request(
-                requests.get,
+                httpx.get,
                 url,
                 headers=HTTP_HEADERS,
                 timeout=API_REQUEST_TIMEOUT,
@@ -301,12 +299,9 @@ class FilingRetrieval:
             )
             response.raise_for_status()
             facts_data = response.json()
-            
-            # Cache the data
             filing_cache.set(cache_key, facts_data)
-            
             return facts_data
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"Error fetching company facts: {e}")
             return None
         except json.JSONDecodeError as e:
@@ -340,7 +335,7 @@ class FilingRetrieval:
         try:
             self._respect_rate_limit()
             response = retry_request(
-                requests.get,
+                httpx.get,
                 url,
                 headers=HTTP_HEADERS,
                 timeout=API_REQUEST_TIMEOUT,
@@ -349,12 +344,9 @@ class FilingRetrieval:
             )
             response.raise_for_status()
             concept_data = response.json()
-            
-            # Cache the data
             filing_cache.set(cache_key, concept_data)
-            
             return concept_data
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"Error fetching company concept: {e}")
             return None
         except json.JSONDecodeError as e:

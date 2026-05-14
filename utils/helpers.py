@@ -1,68 +1,48 @@
-"""
-Helper functions for the EDGAR Financial Tool.
-"""
+"""Helper functions for the EDGAR Financial Tool."""
+from __future__ import annotations
 
 import time
 import logging
 from datetime import datetime, timedelta
-import requests
 
-# Set up logging
+import httpx
+
 logger = logging.getLogger(__name__)
 
 
-def retry_request(request_func, *args, max_retries=3, retry_delay=1, **kwargs):
+def retry_request(request_func, *args, max_retries: int = 3, retry_delay: int = 1, **kwargs):
+    """Retry an httpx request callable with exponential backoff.
+
+    Honors HTTP 429 Retry-After. Raises httpx.HTTPError if all retries fail.
     """
-    Retry a request function with exponential backoff.
-    
-    Args:
-        request_func: The request function to retry (e.g., requests.get)
-        *args: Positional arguments for the request function
-        max_retries (int): Maximum number of retry attempts
-        retry_delay (int): Initial delay between retries in seconds
-        **kwargs: Keyword arguments for the request function
-        
-    Returns:
-        Response object from the request function
-    
-    Raises:
-        requests.exceptions.RequestException: If all retries fail
-    """
-    last_exception = None
+    last_exception: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
             response = request_func(*args, **kwargs)
-            
-            # Check if rate limited (HTTP 429)
+
             if response.status_code == 429:
                 wait_time = int(response.headers.get('Retry-After', retry_delay * 2))
                 logger.warning(f"Rate limited. Waiting {wait_time} seconds.")
                 time.sleep(wait_time)
                 continue
-                
-            # Return successful response
+
             return response
-            
-        except requests.exceptions.RequestException as e:
+
+        except httpx.HTTPError as e:
             last_exception = e
-            
-            # If this was our last attempt, raise the exception
+
             if attempt >= max_retries:
-                logger.error(f"Request failed after {max_retries + 1} attempts: {str(e)}")
+                logger.error(f"Request failed after {max_retries + 1} attempts: {e}")
                 raise
-            
-            # Calculate backoff time
+
             backoff_time = retry_delay * (2 ** attempt)
-            logger.warning(f"Request attempt {attempt + 1} failed: {str(e)}. "
-                          f"Retrying in {backoff_time} seconds...")
+            logger.warning(f"Request attempt {attempt + 1} failed: {e}. "
+                           f"Retrying in {backoff_time} seconds...")
             time.sleep(backoff_time)
-    
-    # This should not be reached due to the raise in the last iteration
+
     if last_exception:
         raise last_exception
-    
-    # Fallback in case somehow we get here
-    raise requests.exceptions.RequestException("All request attempts failed")
+    raise httpx.HTTPError("All request attempts failed")
 
 
 def get_filing_dates(period_type, num_periods):

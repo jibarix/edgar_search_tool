@@ -126,9 +126,10 @@ class DataFormatter:
             'Revenue': 3,
             'Income': 4,
             'EPS': 5,
-            'OperatingCashFlow': 6,
-            'InvestingCashFlow': 7,
-            'FinancingCashFlow': 8
+            'OCI': 6,
+            'OperatingCashFlow': 7,
+            'InvestingCashFlow': 8,
+            'FinancingCashFlow': 9,
         }
         
         # Group metrics by category for better organization
@@ -147,14 +148,16 @@ class DataFormatter:
         for category in sorted_categories:
             # Add category header
             df_data.append({
+                '_metric_key': '',
+                '_source': 'header',
                 'Metric': f"--- {category} ---",
                 **{formatted_periods[period]: "" for period in data['periods']}
             })
-            
+
             # Sort metrics in this category by their order value
-            sorted_metrics = sorted(metrics_by_category[category], 
+            sorted_metrics = sorted(metrics_by_category[category],
                                    key=lambda x: x[1].get('order', 50))
-            
+
             # Add metrics in this category
             for metric_key, metric_data in sorted_metrics:
                 # Use the display name if available, otherwise use the metric key
@@ -163,15 +166,19 @@ class DataFormatter:
                     # Clean up metric name for display
                     display_name = metric_key.split('_', 1)[1]
                     display_name = ' '.join(word.capitalize() for word in display_name.split())
-                
-                row_data = {'Metric': display_name}
-                
+
+                row_data = {
+                    '_metric_key': metric_key,
+                    '_source': metric_data.get('source', 'sec'),
+                    'Metric': display_name,
+                }
+
                 for period in data['periods']:
                     value = metric_data['values'].get(period)
                     row_data[formatted_periods[period]] = value
-                
+
                 df_data.append(row_data)
-        
+
         # Create DataFrame
         return pd.DataFrame(df_data)
     
@@ -186,30 +193,43 @@ class DataFormatter:
         Returns:
             pandas.DataFrame: Formatted DataFrame
         """
-        # Build a lookup from display_name -> unit for decimal formatting
+        # Build a lookup from unique metric_key -> unit so per-row formatting
+        # is unambiguous (display_name collides between tags, e.g. "Basic").
         unit_lookup = {}
         if data and 'metrics' in data:
-            for metric_data in data['metrics'].values():
-                unit_lookup[metric_data.get('display_name', '')] = metric_data.get('unit', 'USD')
+            for metric_key, metric_data in data['metrics'].items():
+                unit_lookup[metric_key] = metric_data.get('unit', 'USD')
 
         # Create a copy to avoid modifying the original
         formatted_df = df.copy()
 
+        has_key = '_metric_key' in formatted_df.columns
+        # `_source` is kept on the df so the console formatter can split rows;
+        # non-console output methods drop it just before write.
+        skip_cols = {'Metric', '_metric_key', '_source'}
+
         # Format numeric columns
         for col in formatted_df.columns:
-            if col != 'Metric':
-                for idx in formatted_df.index:
-                    val = formatted_df.at[idx, col]
-                    if pd.notnull(val) and not isinstance(val, str):
-                        metric_name = formatted_df.at[idx, 'Metric']
-                        unit = unit_lookup.get(metric_name, 'USD')
-                        if unit in ('USD/shares', 'pure'):
-                            decimals = 2
-                        elif unit == 'shares':
-                            decimals = 0
-                        else:
-                            decimals = 0
-                        formatted_df.at[idx, col] = format_financial_number(val, decimals=decimals, use_scaling=False)
+            if col in skip_cols:
+                continue
+            for idx in formatted_df.index:
+                val = formatted_df.at[idx, col]
+                if pd.notnull(val) and not isinstance(val, str):
+                    metric_key = formatted_df.at[idx, '_metric_key'] if has_key else ''
+                    unit = unit_lookup.get(metric_key, 'USD')
+                    if unit == 'pure':
+                        # Effective tax rate etc. — render as percentage.
+                        formatted_df.at[idx, col] = f"{val * 100:.1f}%"
+                    elif unit == 'USD/shares':
+                        formatted_df.at[idx, col] = format_financial_number(val, decimals=2, use_scaling=False)
+                    elif unit == 'shares':
+                        formatted_df.at[idx, col] = format_financial_number(val, decimals=0, use_scaling=False)
+                    else:
+                        formatted_df.at[idx, col] = format_financial_number(val, decimals=0, use_scaling=False)
+
+        # Drop only the per-row metric_key helper here; `_source` flows on.
+        if has_key:
+            formatted_df = formatted_df.drop(columns=['_metric_key'])
 
         return formatted_df
     
@@ -286,7 +306,10 @@ class DataFormatter:
         
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        
+
+        if '_source' in df.columns:
+            df = df.drop(columns=['_source'])
+
         # Write to CSV
         df.to_csv(output_file, index=False, quoting=csv.QUOTE_NONNUMERIC)
         
@@ -317,7 +340,10 @@ class DataFormatter:
         
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        
+
+        if '_source' in df.columns:
+            df = df.drop(columns=['_source'])
+
         # Convert DataFrame to JSON
         json_data = {
             "metadata": {
@@ -361,7 +387,10 @@ class DataFormatter:
         
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        
+
+        if '_source' in df.columns:
+            df = df.drop(columns=['_source'])
+
         # Write to Excel
         with pd.ExcelWriter(output_file, engine='xlsxwriter') as writer:
             # Write DataFrame to Excel
@@ -983,12 +1012,17 @@ class DataFormatter:
     def _format_for_console(self, df, title, company_name=None):
         """
         Format data for console output.
-        
+
+        Splits the table into a core (builtin overrides) section and a
+        supplementary (SEC-mapped) section so the curated lines stay
+        above the auto-derived noise. Falls back to a single table if
+        no ``_source`` column is present.
+
         Args:
             df (pandas.DataFrame): DataFrame to output
             title (str): Statement title
             company_name (str): Name of the company
-            
+
         Returns:
             str: Formatted string for console output
         """
@@ -997,29 +1031,79 @@ class DataFormatter:
             header = f"{company_name} - {title}"
         else:
             header = title
-            
+
         # Format header with borders
         header_border = "=" * min(len(header) + 4, TERMINAL_WIDTH)
         formatted_header = f"\n{header_border}\n  {header}  \n{header_border}\n"
-        
-        # Create a copy of the DataFrame for display formatting
+
         display_df = df.copy()
-        
-        # Identify category rows
-        category_rows = []
+
+        # Replace NaN/None numeric cells with an empty string so tabulate
+        # doesn't render literal "nan" for periods a metric didn't report.
+        skip_cols = {'Metric', '_metric_key', '_source'}
+        for col in display_df.columns:
+            if col in skip_cols:
+                continue
+            display_df[col] = display_df[col].where(display_df[col].notna(), '')
+
+        # Replace category marker rows with prettier upper-cased labels.
         for i, row in display_df.iterrows():
-            metric_col = 'Metric'
-            if isinstance(row[metric_col], str) and row[metric_col].startswith('---'):
-                category_name = row[metric_col].strip('- ')
-                # Replace the category marker with a better formatted version
-                display_df.at[i, metric_col] = f"{category_name.upper()}:"
-                category_rows.append(i)
-        
-        # Format the table
-        table = tabulate(display_df, headers="keys", tablefmt="grid", showindex=False)
-        
-        # Combine and return
-        return f"{formatted_header}\n{table}"
+            metric_val = row['Metric']
+            if isinstance(metric_val, str) and metric_val.startswith('---'):
+                category_name = metric_val.strip('- ')
+                display_df.at[i, 'Metric'] = f"{category_name.upper()}:"
+
+        if '_source' not in display_df.columns:
+            # No source info — emit a single table.
+            table = tabulate(display_df, headers="keys", tablefmt="grid", showindex=False)
+            return f"{formatted_header}\n{table}"
+
+        # Walk rows, partitioning into core/supplementary. A category header
+        # is tracked as the "current" category and emitted once per section
+        # when its first member arrives, so the same category can lead both
+        # the core block and the supplementary block.
+        core_rows: list[dict] = []
+        supp_rows: list[dict] = []
+        current_header: dict | None = None
+        core_header_emitted: set[str] = set()
+        supp_header_emitted: set[str] = set()
+
+        for _, row in display_df.iterrows():
+            src = row['_source']
+            row_dict = row.drop(labels=['_source']).to_dict()
+            if src == 'header':
+                current_header = row_dict
+                continue
+            target = core_rows if src == 'builtin' else supp_rows
+            seen = core_header_emitted if src == 'builtin' else supp_header_emitted
+            if current_header is not None:
+                hdr_label = current_header['Metric']
+                if hdr_label not in seen:
+                    target.append(current_header)
+                    seen.add(hdr_label)
+            target.append(row_dict)
+
+        out = [formatted_header]
+        col_order = [c for c in display_df.columns if c != '_source']
+
+        if core_rows:
+            core_df = pd.DataFrame(core_rows, columns=col_order)
+            out.append(tabulate(core_df, headers="keys", tablefmt="grid", showindex=False))
+
+        if supp_rows:
+            supp_count = sum(
+                1 for r in supp_rows
+                if not (isinstance(r.get('Metric'), str) and r['Metric'].endswith(':'))
+            )
+            out.append("")
+            out.append(
+                f"  Additional details from SEC filings ({supp_count} items) "
+                "-- auto-derived labels, may be redundant with the above:"
+            )
+            supp_df = pd.DataFrame(supp_rows, columns=col_order)
+            out.append(tabulate(supp_df, headers="keys", tablefmt="grid", showindex=False))
+
+        return "\n".join(out)
     
     def _add_balance_sheet_reconciliation(self, df, data):
         """

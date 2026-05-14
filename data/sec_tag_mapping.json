@@ -398,7 +398,7 @@
   "OtherOperatingActivitiesCashFlowStatement": {
     "statement": "CF",
     "category": "OperatingCashFlow",
-    "display_name": "Other",
+    "display_name": "Other operating activities",
     "count": 2614
   },
   "NetCashProvidedByUsedInOperatingActivities": {
@@ -656,7 +656,7 @@
   "OtherNoncashIncomeExpense": {
     "statement": "CF",
     "category": "OperatingCashFlow",
-    "display_name": "Other",
+    "display_name": "Other non-cash income/(expense)",
     "count": 6100
   },
   "IncreaseDecreaseInDueToRelatedParties": {
@@ -710,7 +710,7 @@
   "PaymentsForProceedsFromOtherInvestingActivities": {
     "statement": "CF",
     "category": "InvestingCashFlow",
-    "display_name": "Other",
+    "display_name": "Other investing activities, net",
     "count": 5302
   },
   "ProceedsFromIssuanceOfSharesUnderIncentiveAndShareBasedCompensationPlansIncludingStockOptions": {
@@ -734,7 +734,7 @@
   "ProceedsFromPaymentsForOtherFinancingActivities": {
     "statement": "CF",
     "category": "FinancingCashFlow",
-    "display_name": "Other",
+    "display_name": "Other financing activities, net",
     "count": 5088
   },
   "IncomeTaxesPaidNet": {
@@ -1766,7 +1766,7 @@
   "PropertyPlantAndEquipmentGross": {
     "statement": "BS",
     "category": "Assets",
-    "display_name": "Property, plant and equipment",
+    "display_name": "Property, plant and equipment, gross",
     "count": 1285
   },
   "AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment": {
@@ -2072,7 +2072,7 @@
   "OtherNoninterestExpense": {
     "statement": "IS",
     "category": "Income",
-    "display_name": "Other",
+    "display_name": "Other non-interest expense",
     "count": 1833
   },
   "NoninterestExpense": {
@@ -2894,7 +2894,7 @@
   "OtherAssetsMiscellaneousNoncurrent": {
     "statement": "BS",
     "category": "Assets",
-    "display_name": "Other",
+    "display_name": "Other miscellaneous assets, non-current",
     "count": 204
   },
   "ContractWithCustomerLiabilityCurrent": {
@@ -3266,7 +3266,7 @@
   "OtherInterestAndDividendIncome": {
     "statement": "IS",
     "category": "Income",
-    "display_name": "Other",
+    "display_name": "Other interest and dividend income",
     "count": 696
   },
   "InterestExpenseFederalFundsPurchasedAndSecuritiesSoldUnderAgreementsToRepurchase": {
@@ -3314,7 +3314,7 @@
   "NoninterestIncomeOtherOperatingIncome": {
     "statement": "IS",
     "category": "Income",
-    "display_name": "Other",
+    "display_name": "Other non-interest operating income",
     "count": 1213
   },
   "InformationTechnologyAndDataProcessing": {
@@ -3950,7 +3950,7 @@
   "ProceedsFromOtherOperatingActivities": {
     "statement": "CF",
     "category": "OperatingCashFlow",
-    "display_name": "Other",
+    "display_name": "Other operating proceeds",
     "count": 49
   },
   "PaymentsToAcquireInProcessResearchAndDevelopment": {
@@ -4628,7 +4628,7 @@
   "OtherCostOfOperatingRevenue": {
     "statement": "IS",
     "category": "Income",
-    "display_name": "Other",
+    "display_name": "Other cost of operating revenue",
     "count": 278
   },
   "RestructuringReserveSettledWithoutCash2": {
@@ -5648,7 +5648,7 @@
   "CashDivestedFromDeconsolidation": {
     "statement": "CF",
     "category": "OperatingCashFlow",
-    "display_name": "Cash paid in AxoBio Disposition",
+    "display_name": "Cash divested from deconsolidation",
     "count": 163
   },
   "PaymentsForRepurchaseOfRedeemableNoncontrollingInterest": {
@@ -7940,7 +7940,7 @@
   "OtherReceivablesGrossCurrent": {
     "statement": "BS",
     "category": "Assets",
-    "display_name": "Other",
+    "display_name": "Other receivables, current",
     "count": 32
   },
   "IncomeLossAttributableToNoncontrollingInterest": {
@@ -8228,7 +8228,7 @@
   "UnregulatedOperatingRevenue": {
     "statement": "IS",
     "category": "Revenue",
-    "display_name": "Other",
+    "display_name": "Unregulated operating revenue",
     "count": 81
   },
   "IncreaseDecreaseInAllowanceForEquityFundsUsedDuringConstruction": {
@@ -8966,7 +8966,7 @@
   "NontradeReceivablesCurrent": {
     "statement": "BS",
     "category": "Assets",
-    "display_name": "Other",
+    "display_name": "Non-trade receivables, current",
     "count": 184
   },
   "NotesAndLoansReceivableGrossCurrent": {
@@ -10244,7 +10244,7 @@
   "OtherComprehensiveIncomeOtherNetOfTax": {
     "statement": "IS",
     "category": "Income",
-    "display_name": "Other",
+    "display_name": "Other comprehensive income, other",
     "count": 47
   },
   "GainLossOnSaleOfLeasedAssetsNetOperatingLeases": {
@@ -11000,7 +11000,7 @@
   "OtherDeferredCostsNet": {
     "statement": "BS",
     "category": "Assets",
-    "display_name": "Other",
+    "display_name": "Other deferred costs, net",
     "count": 41
   },
   "OperatingLeaseImpairmentLoss": {
@@ -11666,13 +11666,13 @@
   "UndistributedEarnings": {
     "statement": "IS",
     "category": "Income",
-    "display_name": "Net income available to SiriusPoint common shareholders",
+    "display_name": "Undistributed earnings",
     "count": 12
   },
   "UndistributedEarningsDiluted": {
     "statement": "IS",
     "category": "Income",
-    "display_name": "Net income available to SiriusPoint common shareholders",
+    "display_name": "Undistributed earnings, diluted",
     "count": 8
   },
   "ProceedsOfOtherLoansAndLeasesHeldForInvestment": {
@@ -11828,7 +11828,7 @@
   "InterestAndDividendIncomeSecuritiesOther": {
     "statement": "IS",
     "category": "Income",
-    "display_name": "Other",
+    "display_name": "Interest and dividend income, other securities",
     "count": 78
   },
   "LeaseCost": {
@@ -12212,7 +12212,7 @@
   "GainLossOnSaleOfPreviouslyUnissuedStockBySubsidiaryOrEquityInvesteeNonoperatingIncome": {
     "statement": "CF",
     "category": "OperatingCashFlow",
-    "display_name": "Loss on AtlasClear asset acquisition",
+    "display_name": "Gain/(loss) on subsidiary/equity-investee stock sale",
     "count": 32
   },
   "OtherComprehensiveIncomeForeignCurrencyTranslationGainLossArisingDuringPeriodTax": {
@@ -13394,7 +13394,7 @@
   "ProceedsFromPreviousAcquisition": {
     "statement": "CF",
     "category": "OperatingCashFlow",
-    "display_name": "Net proceeds from purchase price adjustments for eOne acquisition (see Note 3)",
+    "display_name": "Proceeds from previous acquisition",
     "count": 53
   },
   "AcquisitionCosts": {
@@ -13682,7 +13682,7 @@
   "OtherSundryLiabilitiesNoncurrent": {
     "statement": "BS",
     "category": "Liabilities",
-    "display_name": "Other",
+    "display_name": "Other sundry liabilities, non-current",
     "count": 19
   },
   "NetInvestmentInLeaseNoncurrent": {
@@ -14612,7 +14612,7 @@
   "OtherGeneralExpense": {
     "statement": "IS",
     "category": "Income",
-    "display_name": "Other",
+    "display_name": "Other general expense",
     "count": 287
   },
   "AdjustmentOfWarrantsGrantedForServices": {
@@ -14912,7 +14912,7 @@
   "OtherOilAndGasPropertySuccessfulEffortMethod": {
     "statement": "BS",
     "category": "Assets",
-    "display_name": "Other",
+    "display_name": "Other oil and gas properties (successful efforts)",
     "count": 25
   },
   "ResultsOfOperationsRevenueFromOilAndGasProducingActivities": {
@@ -19184,7 +19184,7 @@
   "IntangibleAssetsGrossExcludingGoodwill": {
     "statement": "BS",
     "category": "Assets",
-    "display_name": "Mobile Application and Website Development",
+    "display_name": "Intangible assets, gross (excluding goodwill)",
     "count": 13
   },
   "PreferredStockSharesSubscribedButUnissuedValue": {

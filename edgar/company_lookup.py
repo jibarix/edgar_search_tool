@@ -1,11 +1,10 @@
-"""
-Company lookup functionality for finding SEC CIK numbers.
-"""
+"""Company lookup functionality for finding SEC CIK numbers."""
+from __future__ import annotations
 
-import json
 import re
-import requests
 from difflib import get_close_matches
+
+import httpx
 
 from config.constants import COMPANY_TICKERS_URL, HTTP_HEADERS, ERROR_MESSAGES
 from config.settings import API_REQUEST_TIMEOUT, API_RETRY_COUNT, API_RETRY_DELAY
@@ -44,7 +43,7 @@ def get_company_tickers():
     # If not in cache, fetch from SEC
     try:
         response = retry_request(
-            requests.get,
+            httpx.get,
             COMPANY_TICKERS_URL,
             headers=HTTP_HEADERS,
             timeout=API_REQUEST_TIMEOUT,
@@ -84,7 +83,7 @@ def get_company_tickers():
         
         return companies_by_name
     
-    except requests.exceptions.RequestException as e:
+    except httpx.HTTPError as e:
         print(f"Error fetching company tickers: {e}")
         return {}
 

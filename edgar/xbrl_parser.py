@@ -1,14 +1,14 @@
+"""Parser for SEC XBRL Company Facts API data.
+
+Classifies concepts into financial-statement categories via the
+deterministic TagClassifier (builtin overrides + sec_tag_mapping.json).
 """
-Enhanced parser for extracting financial data from SEC XBRL and JSON APIs.
-Uses LLM-powered tag classification for comprehensive concept coverage.
-"""
+from __future__ import annotations
 
 import re
 import logging
-from datetime import datetime
 from collections import Counter, defaultdict
 
-from config.constants import XBRL_TAGS, ERROR_MESSAGES
 from edgar.tag_classifier import TagClassifier
 from utils.cache import Cache
 
@@ -59,7 +59,7 @@ class XBRLParser:
 
         logger.info(f"Found {len(all_concept_names)} unique concepts in data")
 
-        # Classify all concepts at once (uses cache, only calls LLM for unknowns)
+        # Classify all concepts via the builtin + SEC tag mapping.
         classifications = self.classifier.classify_tags(
             list(all_concept_names),
             statement_type=statement_type
