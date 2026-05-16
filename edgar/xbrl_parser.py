@@ -5,11 +5,14 @@ deterministic TagClassifier (builtin overrides + sec_tag_mapping.json).
 """
 from __future__ import annotations
 
+import copy
 import re
 import logging
 from collections import Counter, defaultdict
 
+from edgar._extension_mappings import ExtensionRule, apply_rules
 from edgar.tag_classifier import TagClassifier
+from edgar.xbrl_instance import parse_instance
 from utils.cache import Cache
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,10 @@ class XBRLParser:
             taxonomies.append('us-gaap')
         if 'ifrs-full' in facts_data['facts']:
             taxonomies.append('ifrs-full')
+        # Synthetic taxonomy populated by augment_with_extensions(); contains
+        # canonical concepts derived from company-extension XBRL tags.
+        if 'ext' in facts_data['facts']:
+            taxonomies.append('ext')
 
         if not taxonomies:
             logger.error("No supported taxonomies found in company facts")
@@ -104,7 +111,11 @@ class XBRLParser:
             category = info['category']
             if category not in financial_data:
                 financial_data[category] = {}
-            taxonomy = 'us-gaap' if concept in facts_data['facts'].get('us-gaap', {}) else 'ifrs-full'
+            # Resolve the originating taxonomy (us-gaap / ifrs-full / ext-synthetic)
+            taxonomy = next(
+                (t for t in taxonomies if concept in facts_data['facts'].get(t, {})),
+                taxonomies[0],
+            )
             tag = f"{taxonomy}:{concept}"
             financial_data[category][tag] = concept_values[concept]
             # Track dominant unit for this concept
@@ -255,6 +266,113 @@ class XBRLParser:
         month_counter = Counter(months)
         most_common = month_counter.most_common(1)
         return most_common[0][0] if most_common else '12'
+
+    def augment_with_extensions(self, facts_data, filing_retrieval, cik,
+                                filings, rules):
+        """Merge company-extension XBRL facts into a Company Facts JSON blob.
+
+        For each provided filing, this:
+          1. Downloads the filing's standalone XBRL instance doc (`*_htm.xml`).
+          2. Parses it for consolidated facts (skips dimensional breakdowns).
+          3. Applies extension rules to map issuer-specific concepts
+             (e.g. `abg:FloorPlanNotesPayableTrade`) to canonical names
+             (`FloorPlanNotesPayable`).
+          4. Aggregates per (canonical, period_end) — splits get summed.
+          5. Injects the aggregated facts under a synthetic `ext` taxonomy
+             in the same Company-Facts-JSON shape, so the existing
+             `parse_company_facts` pipeline picks them up unchanged.
+
+        Returns the augmented `facts_data` (mutated in place). Failures
+        on individual filings log a warning and are skipped — partial
+        coverage is better than none.
+
+        Args:
+            facts_data: Output of FilingRetrieval.get_company_facts()
+            filing_retrieval: FilingRetrieval instance
+            cik: Company CIK
+            filings: list of filing-metadata dicts (from get_filing_metadata)
+            rules: list of ExtensionRule (e.g. DEALER_RULES)
+        """
+        if not facts_data or 'facts' not in facts_data:
+            return facts_data
+
+        # Collect (canonical, period_end, period_type) -> aggregated fact dict
+        # across all filings. Older filings can fill periods missing from
+        # newer ones (5-year cash flow tables, etc.).
+        combined: dict[tuple[str, str, str], dict] = {}
+
+        for filing in filings:
+            acc = filing.get('accession_number')
+            filed = filing.get('filing_date')
+            if not acc:
+                continue
+            try:
+                xml = filing_retrieval.get_filing_instance_xml(cik, acc)
+                if not xml:
+                    continue
+                facts = parse_instance(xml)
+                # apply_rules already aggregates within one filing; we then
+                # merge across filings, preferring the latest filed value.
+                per_filing = apply_rules(facts, rules)
+                for key, agg in per_filing.items():
+                    agg = dict(agg)  # shallow copy so we can add 'filed'/'accn'
+                    agg['filed'] = filed
+                    agg['accn'] = acc
+                    existing = combined.get(key)
+                    if existing is None or (
+                        filed and (existing.get('filed') or '') < filed
+                    ):
+                        combined[key] = agg
+            except Exception as e:
+                logger.warning(
+                    f"Skipping extensions from filing {acc}: {e.__class__.__name__}: {e}"
+                )
+                continue
+
+        if not combined:
+            return facts_data
+
+        # Group by canonical concept → list of fact dicts in Company-Facts API shape
+        per_concept: dict[str, list[dict]] = defaultdict(list)
+        per_concept_meta: dict[str, dict] = {}
+        for (canonical, period_end, period_type), agg in combined.items():
+            fact_dict = {
+                'val': agg['value'],
+                'end': period_end,
+                'filed': agg.get('filed'),
+                'accn': agg.get('accn'),
+            }
+            if period_type == 'duration':
+                fact_dict['start'] = agg['period_start']
+            per_concept[canonical].append(fact_dict)
+            if canonical not in per_concept_meta:
+                per_concept_meta[canonical] = {
+                    'category': agg['category'],
+                    'unit': agg['unit'],
+                    'source_concepts': set(agg.get('source_concepts', [])),
+                }
+            else:
+                per_concept_meta[canonical]['source_concepts'].update(
+                    agg.get('source_concepts', [])
+                )
+
+        # Inject under synthetic 'ext' taxonomy in Company-Facts JSON shape
+        ext_block = facts_data['facts'].setdefault('ext', {})
+        for canonical, fact_list in per_concept.items():
+            unit = per_concept_meta[canonical]['unit']
+            src = sorted(per_concept_meta[canonical]['source_concepts'])
+            ext_block[canonical] = {
+                'label': canonical,
+                'description': f"Aggregated from extension concepts: {', '.join(src)}",
+                'units': {unit: fact_list},
+            }
+
+        logger.info(
+            f"Injected {len(per_concept)} canonical extension concepts "
+            f"({sum(len(v) for v in per_concept.values())} facts) "
+            f"from {len(filings)} filings"
+        )
+        return facts_data
 
     def normalize_financial_data(self, financial_data, period_type='annual', num_periods=1):
         """Normalize financial data (compatibility method)."""

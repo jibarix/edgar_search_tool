@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 # Initialize cache for filing data
 filing_cache = Cache("filing_data", expiry=3600)
+# Immutable XBRL instance docs — cache for 30 days
+instance_cache = Cache("xbrl_instance", expiry=30 * 86400)
 
 # Define a basic JSON schema for validating EDGAR submissions.
 EDGAR_SUBMISSIONS_SCHEMA = {
@@ -306,6 +308,84 @@ class FilingRetrieval:
             return None
         except json.JSONDecodeError as e:
             logger.error(f"Error parsing company facts JSON: {e}")
+            return None
+
+    def get_filing_instance_xml(self, cik, accession_number):
+        """Fetch the standalone XBRL instance document (*_htm.xml) for a filing.
+
+        The *_htm.xml file is the regulator-validated XBRL extracted from the
+        filing's iXBRL HTML. It contains every reported fact INCLUDING
+        company-extension concepts that the Company Facts API filters out.
+
+        Args:
+            cik: Company CIK (zero-padded or not).
+            accession_number: SEC accession number, with or without dashes.
+
+        Returns:
+            bytes: XML content, or None on error / no instance doc found.
+        """
+        if not is_valid_cik(cik):
+            logger.error(ERROR_MESSAGES["INVALID_CIK"])
+            return None
+
+        cik_int = int(str(cik).lstrip("0") or "0")
+        acc_nodash = str(accession_number).replace("-", "")
+        cache_key = f"instance_xml_{cik_int}_{acc_nodash}"
+
+        # Instance docs are immutable once filed; use the long-TTL cache
+        cached = instance_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Resolve the instance filename via the filing's index.json
+        base = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}"
+        index_url = f"{base}/index.json"
+        try:
+            self._respect_rate_limit()
+            r = retry_request(
+                httpx.get, index_url, headers=HTTP_HEADERS,
+                timeout=API_REQUEST_TIMEOUT,
+                max_retries=API_RETRY_COUNT, retry_delay=API_RETRY_DELAY,
+            )
+            r.raise_for_status()
+            items = r.json().get("directory", {}).get("item", [])
+        except (httpx.HTTPError, json.JSONDecodeError) as e:
+            logger.warning(f"Failed to fetch filing index {accession_number}: {e}")
+            return None
+
+        instance_name = next(
+            (it["name"] for it in items if it.get("name", "").endswith("_htm.xml")),
+            None,
+        )
+        if not instance_name:
+            # Older filings may use a different naming convention; try the
+            # primary .xml that isn't a linkbase
+            for it in items:
+                name = it.get("name", "")
+                if (name.endswith(".xml")
+                        and not name.endswith(("_cal.xml", "_def.xml",
+                                               "_lab.xml", "_pre.xml",
+                                               "FilingSummary.xml"))):
+                    instance_name = name
+                    break
+        if not instance_name:
+            logger.warning(f"No XBRL instance doc found in filing {accession_number}")
+            return None
+
+        instance_url = f"{base}/{instance_name}"
+        try:
+            self._respect_rate_limit()
+            r = retry_request(
+                httpx.get, instance_url, headers=HTTP_HEADERS,
+                timeout=API_REQUEST_TIMEOUT,
+                max_retries=API_RETRY_COUNT, retry_delay=API_RETRY_DELAY,
+            )
+            r.raise_for_status()
+            content = r.content
+            instance_cache.set(cache_key, content)
+            return content
+        except httpx.HTTPError as e:
+            logger.warning(f"Failed to download instance {instance_url}: {e}")
             return None
 
     def get_company_concept(self, cik, taxonomy, concept):

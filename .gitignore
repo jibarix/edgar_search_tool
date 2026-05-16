@@ -10,3 +10,16 @@ report.json
 .claude/
 data/sec_datasets/*.zip
 data/sec_datasets/*/
+
+# Proprietary Capital IQ / S&P exports & reference material — never
+# publish to the public repo (licensed third-party data).
+data/bottomUpBeta.xlsx
+data/capiq_dealership_comps.json
+data/comparables_dealerships_*.xls
+data/comparables_dealerships_*.xlsx
+data/Supported Metrics.zip
+data/_supported_metrics_extract/
+data/FinancialsGlossary.*
+data/Variables used in Data Set.html
+data/Variables used in Data Set_files/
+data/sens_valuation_general_framework_*.tex

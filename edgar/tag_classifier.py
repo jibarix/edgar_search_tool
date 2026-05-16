@@ -66,6 +66,10 @@ _BUILTIN_TAGS = {
     "CommercialPaper":                               {"statement": "BS", "category": "Liabilities", "display_name": "Commercial paper",                "order": 250, "indent": 1},
     "ShortTermBorrowings":                           {"statement": "BS", "category": "Liabilities", "display_name": "Short-term borrowings",           "order": 255, "indent": 1},
     "OtherLiabilitiesCurrent":                       {"statement": "BS", "category": "Liabilities", "display_name": "Other current liabilities",       "order": 270, "indent": 1},
+    # Synthetic concepts injected from company-extension XBRL (see edgar/_extension_mappings.py)
+    "FloorPlanNotesPayable":                         {"statement": "BS", "category": "Liabilities", "display_name": "Floor plan notes payable",        "order": 245, "indent": 1},
+    "NonrecourseNotesPayable":                       {"statement": "BS", "category": "Liabilities", "display_name": "Non-recourse notes payable",      "order": 312, "indent": 1},
+    "LoanerVehicleNotesPayable":                     {"statement": "BS", "category": "Liabilities", "display_name": "Loaner vehicle notes payable",    "order": 246, "indent": 1},
 
     "LiabilitiesNoncurrent":                         {"statement": "BS", "category": "Liabilities", "display_name": "Total non-current liabilities",   "order": 390, "indent": 0, "is_subtotal": True, "section": "Non-current liabilities:"},
     "LongTermDebt":                                  {"statement": "BS", "category": "Liabilities", "display_name": "Long-term debt",                  "order": 310, "indent": 1},

@@ -1,10 +1,12 @@
 """MCP server exposing edgar_search_tool over stdio.
 
 Tools:
-    lookup_company       - resolve a name or ticker to SEC CIK
+    lookup_company          - resolve a name or ticker to SEC CIK
     get_financial_statement - normalized BS / IS / CF / EQ / CI by period
-    get_concept          - time series for a single XBRL concept
-    search_companies     - filter the local SIC/country/revenue index
+    get_concept             - time series for a single XBRL concept
+    search_companies        - filter the local SIC/country/revenue index
+    list_metrics            - list registered derived metrics
+    compute_metric          - compute a derived metric (ratios, margins, growth, etc.)
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from mcp.server.fastmcp import FastMCP
 from edgar.company_lookup import format_cik, search_company
 from edgar.filing_retrieval import FilingRetrieval
 from edgar.xbrl_parser import XBRLParser
+from edgar import metrics as edgar_metrics
 
 mcp = FastMCP("edgar-search")
 
@@ -152,3 +155,69 @@ def search_companies(
             break
 
     return {"count": len(out), "results": out}
+
+
+@mcp.tool()
+def list_metrics(category: str | None = None) -> dict:
+    """List registered derived metrics.
+
+    `category` filters by metric category: "ratio", "margin", "return",
+    "wc" (working capital), "derived_line", "growth", or None for all.
+    """
+    slugs = edgar_metrics.list_slugs(category=category)
+    return {"count": len(slugs), "metrics": slugs}
+
+
+@mcp.tool()
+def compute_metric(
+    slug: str,
+    cik_or_ticker: str,
+    period_type: Literal["annual", "quarterly", "ytd"] = "annual",
+    num_periods: int = 3,
+) -> dict:
+    """Compute a derived metric for a company.
+
+    `slug` is a metric registered in edgar.metrics.REGISTRY (call
+    `list_metrics()` to enumerate). Internally fetches enough history to
+    satisfy the metric's `needs_lookback` requirement (averages, CAGR).
+    """
+    spec = edgar_metrics.REGISTRY.get(slug)
+    if spec is None:
+        return {"error": f"Unknown metric slug: {slug}"}
+
+    cik = _resolve_cik(cik_or_ticker)
+    if cik is None:
+        return {"error": f"No company matched '{cik_or_ticker}'"}
+
+    facts = _filings.get_company_facts(cik)
+    if not facts:
+        return {"error": f"No company facts available for CIK {cik}"}
+
+    fetch_n = num_periods + spec.needs_lookback
+    normalized = _parser.parse_company_facts(
+        facts,
+        statement_type="ALL",
+        period_type=period_type,
+        num_periods=fetch_n,
+    )
+    if not normalized:
+        return {"error": f"No data for CIK {cik}"}
+
+    stmt = edgar_metrics.NormalizedStatement(normalized)
+    series = spec.fn(stmt)
+
+    # Trim to the requested num_periods (drop oldest lookback rows)
+    visible_periods = stmt.periods[:num_periods]
+    visible_values = {p: series.get(p) for p in visible_periods}
+
+    return {
+        "cik": cik,
+        "entity_name": facts.get("entityName", ""),
+        "slug": slug,
+        "description": spec.description,
+        "unit": spec.unit,
+        "category": spec.category,
+        "statements_used": list(spec.statements),
+        "periods": visible_periods,
+        "values": visible_values,
+    }

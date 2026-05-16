@@ -208,6 +208,78 @@ Financial data retrieved through the SEC API is structured as follows:
 
 The tool normalizes this data and organizes it by financial statement type, making it easy to analyze and export.
 
+## Financial Metrics
+
+The `edgar.metrics` package layers a vendor-comparable metric engine on top of
+the raw XBRL pull. ~60 metrics are registered across five modules:
+
+| Module | Examples |
+|--------|----------|
+| `derived_lines` | revenue, cogs, gross_profit, ebit, ebitda, ebitda_less_capex, fcf, fcf_unlev, nwc, total_debt, total_debt_incl_leases, invested_capital, cash_and_st_investments |
+| `margins` | gross_profit_margin, ebit_margin, ebitda_margin, ni_margin, fcf_margin, capex_margin, sga_margin, ... |
+| `ratios` | debt_to_capital, debt_to_ebitda, current_ratio, quick_ratio, interest_coverage, ... |
+| `returns` | roa, roe, roic, asset_turnover, inventory_turnover, fixed_asset_turnover |
+| `working_capital` | dso, dio, dpo, cash_conversion_cycle |
+| `growth` (auto-registered) | `<base>_growth`, `<base>_cagr_{3,5,7}y` for revenue / ebit / ebitda / ni / fcf / capex / nwc / total_debt |
+
+### CapIQ-aligned EBIT methodology
+
+`derived_lines.ebit()` is normalized to match Capital IQ's Operating Income
+definition rather than the raw `us-gaap:OperatingIncomeLoss` tag. Per the
+CapIQ Financials Glossary, data item [21] Operating Income excludes [19]
+Unusual Items — which absorbs goodwill impairment ([209]) and held-for-sale
+impairments (reclassified into [56] Gain/Loss on Sale of Assets). SEC
+issuers do not make those reclassifications inside their XBRL, so the
+metric layer adds them back:
+
+```
+EBIT = OperatingIncomeLoss + goodwill_impairment + asset_impairment
+```
+
+`goodwill_impairment` and `asset_impairment` are concept chains in
+`edgar/metrics/_concepts.py` that walk the relevant us-gaap tags
+(`GoodwillImpairmentLoss`, `AssetImpairmentCharges`,
+`TangibleAssetImpairmentCharges`,
+`ImpairmentOfIntangibleAssetsExcludingGoodwill`,
+`ImpairmentOfLongLivedAssetsHeldForUse`, ...) across both Income and
+OperatingCashFlow categories. The add-back propagates automatically to
+`ebit_margin`, `ebitda`, `ebitda_margin`, `ebit_growth`, `ebitda_growth`,
+and `roic`.
+
+A pretax+interest fallback covers hybrid-finance issuers (e.g. CarMax)
+that route finance-segment interest through revenue and never tag
+`OperatingIncomeLoss`.
+
+### LTM and dealer-specific extensions
+
+- `edgar.metrics.ltm.build_ltm_statement` rolls annual + quarterly facts
+  into a trailing-twelve-months statement for issuers whose fiscal year
+  ends off-calendar (e.g. CarMax FY ends Feb 28, America's Car-Mart FY
+  ends April 30).
+- `edgar/_extension_mappings.py` declares dealer-specific extension
+  concepts (floor-plan notes payable, non-recourse auto-finance notes,
+  loaner-vehicle notes) that the Company Facts API does not expose by
+  default. `XBRLParser.augment_with_extensions` injects them from the
+  raw instance documents so total-debt and debt-ratio metrics are
+  apples-to-apples with vendor templates.
+
+### Known reconciliation gaps
+
+Validated against Capital IQ's US auto-dealer comparables template (ABG,
+AN, LAD, PAG, GPI, SAH; Dec 2025) — EBIT margin within ±0.2pp on all
+dealers; EBIT growth within ±2pp on four of six. Two residual gaps:
+
+- **SAH 2025**: CapIQ partial-strips a $173M asset-impairment charge
+  based on held-for-sale footnote analysis that cannot be replicated
+  from raw XBRL alone. EBIT-growth residual: ~+10pp.
+- **PAG 2025**: CapIQ strips a $52M `GainLossOnSaleOfBusiness` from
+  operating income. Applying that broadly to all dealers over-corrects
+  ABG, so it is not added back uniformly. EBIT-growth residual: ~+4pp.
+
+For screening and ranking the engine is a viable free replacement for
+the vendor template. For point-estimate accuracy on dealers with active
+divestiture activity, read the 10-K footnotes manually.
+
 ## Project Structure
 
 ```
@@ -231,7 +303,18 @@ edgar_search_tool/
 │   ├── tag_classifier.py       # Map XBRL tags to statement sections
 │   ├── statement_extractor.py  # HTML/XML fallback when XBRL is incomplete
 │   ├── data_formatter.py       # CSV / JSON / Excel / HTML / console output
-│   └── company_classifier.py   # Build SIC/country/revenue index from SEC bulk data
+│   ├── company_classifier.py   # Build SIC/country/revenue index from SEC bulk data
+│   ├── _extension_mappings.py  # Dealer-specific extension concept rules
+│   └── metrics/                # Vendor-comparable metric engine
+│       ├── registry.py         # NormalizedStatement + @register decorator
+│       ├── _concepts.py        # Fallback chains for us-gaap concepts
+│       ├── derived_lines.py    # ebit, ebitda, fcf, total_debt, ...
+│       ├── margins.py          # *_margin metrics
+│       ├── ratios.py           # debt/capital, interest coverage, ...
+│       ├── returns.py          # roa, roe, roic, turnover
+│       ├── working_capital.py  # dso, dio, dpo, ccc
+│       ├── growth.py           # auto-registers <base>_growth + _cagr_{3,5,7}y
+│       └── ltm.py              # trailing-twelve-months rollup
 │
 ├── config/
 │   ├── settings.py             # Configuration settings
